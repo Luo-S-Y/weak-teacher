@@ -31,8 +31,15 @@ else
   done
 fi
 if [ -z "${PY:-}" ]; then
-  echo "ERROR: 未找到 python/python3, 请先确认 python 位置或设置 PY=/path/to/python 后重试"
-  exit 1
+  echo "  未找到 python, 尝试用 apt 安装系统 python3 (AutoDL 为 root)..."
+  if apt-get update > /tmp/opd_apt.log 2>&1 && apt-get install -y python3 python3-pip >> /tmp/opd_apt.log 2>&1; then
+    PY=/usr/bin/python3
+    echo "  已安装: $PY"
+  else
+    echo "ERROR: 自动安装 python3 失败, 日志: /tmp/opd_apt.log"
+    echo "       请手动确认 python 位置后执行: PY=/path/to/python bash setup.sh"
+    exit 1
+  fi
 fi
 
 echo "==================== AutoDL 4090 部署 ===================="
@@ -96,7 +103,12 @@ echo "  HF_ENDPOINT=https://hf-mirror.com"
 
 # ---------- [3/5] 依赖安装 ----------
 echo ""
-echo "[3/5] 安装依赖 (锁定 torch==2.6.0)..."
+echo "[3/5] 检查 Python 版本 + 安装依赖 (锁定 torch==2.6.0)..."
+if ! "$PY" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null; then
+  echo "ERROR: Python 版本过低 (<3.10), trl==0.15.1 无法安装"
+  echo "       建议重新安装 conda: bash <(curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh -b) 或使用 3.10+ 的 python"
+  exit 1
+fi
 # 已装 torch 2.6.0 则跳过, 否则统一装 2.6.0 (PyPI 默认 CUDA 12.4 wheel, 4090 兼容)
 if "$PY" -c "import torch; assert torch.__version__ == '2.6.0'" 2>/dev/null; then
   echo "  torch==2.6.0 已就绪, 跳过重装 (仅补装其余依赖)"
