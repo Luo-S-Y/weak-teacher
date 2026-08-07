@@ -57,24 +57,10 @@ mkdir -p data/raw data/generated data/tokenized data/weights checkpoints results
 touch checkpoints/.write_test && rm checkpoints/.write_test
 echo "  数据目录 OK (data/ checkpoints/ results/)"
 
-# 数据盘软链 (42 组 checkpoint 全参约 120GB, 必须放数据盘)
-if [ -d /root/autodl-tmp ] && [ "${AUTODL_TMP:-1}" != "0" ]; then
-  for d in checkpoints results; do
-    target="/root/autodl-tmp/opd_$d"
-    # 目标不可创建(数据盘未挂载/只读)则跳过软链, 用本机目录
-    if [ ! -d "$target" ] && ! mkdir -p "$target" 2>/dev/null; then
-      echo "  WARNING: 无法创建 $target, $d 使用本机目录"
-      continue
-    fi
-    if [ ! -L "$d" ]; then
-      mv "$d" "$d.bak" 2>/dev/null || true
-      ln -s "$target" "$d"
-      echo "  $d -> $target (数据盘)"
-    fi
-  done
-  df -h /root/autodl-tmp | tail -1 | awk '{print "  数据盘剩余空间: "$4}'
-else
-  echo "  未检测到 /root/autodl-tmp, 使用本机磁盘 (注意容量)"
+# 数据盘软链 (42 组 checkpoint 全参约 120GB, 必须放数据盘) -> 复用 setup_links.sh
+echo ""
+if ! bash "$SCRIPT_DIR/setup_links.sh" 2>/dev/null; then
+  echo "  WARNING: 数据盘软链配置失败, 使用本机目录 (注意容量)"
 fi
 
 # GPU 检测
