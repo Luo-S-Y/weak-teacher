@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Step 0: 数据集准备
 - 默认: DeepScaleR (训练, 40.3k 抽样 8k) + AIME24 (评测, 内置兜底) -> data/raw/*.json
 - 可选: --gsm8k 备用 | --math500 | --code | --all

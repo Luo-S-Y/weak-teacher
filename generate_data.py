@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Step 1: 训练数据生成 (DeepScaleR 训练集)
 - 主教师 Qwen2.5-0.5B: 生成 CoT 轨迹 + 每 token logprob (E1)
 - 自一致性: 主教师 K 次采样答案 (E2)

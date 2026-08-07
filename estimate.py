@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Step 2: 可信度估计 E0-E6 + 42 组合训练数据组装
 - 对每条样本计算 7 种估计器置信度 c
 - tokenize 一次生成共享 base (input_ids/labels/token_weights, Qwen3 学生格式)

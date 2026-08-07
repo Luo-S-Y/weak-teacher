@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Step 3: TRL SFTTrainer 加权训练 (阶段 A 粗筛: 7 估计器 x 6 机制 = 42 组)
 - 复用共享 tokenize 缓存 base.npz, 每组合仅加载索引 + 权重
 - WeightedSFTTrainer: 覆盖 compute_loss 实现 W1 样本级 / W3 token 级 / W4 软标签插值

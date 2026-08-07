@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Step 4: AIME24 评测 (阶段 A 筛选指标)
 - vLLM 批量评测 (4090 推荐, vllm>=0.8.5), 失败自动回退 transformers generate
 - 学生评测关闭 thinking (enable_thinking=False), 与蒸馏数据分布一致
