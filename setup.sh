@@ -16,7 +16,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 自动探测 python (python -> python3), 可用 PY=/path/to/python 覆盖
+# 自动探测 python (PATH -> AutoDL miniconda 常见路径), 可用 PY=/path/to/python 覆盖
+# 只直接用二进制, 不做 conda activate 初始化
 if [ -n "${PY:-}" ]; then
   :
 elif command -v python >/dev/null 2>&1; then
@@ -24,7 +25,13 @@ elif command -v python >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
   PY=python3
 else
-  echo "ERROR: 未找到 python/python3, 请设置 PY=/path/to/python 后重试"
+  for cand in /root/miniconda3/bin/python /root/miniconda3/bin/python3 \
+              /opt/conda/bin/python /opt/conda/bin/python3 /usr/bin/python3; do
+    if [ -x "$cand" ]; then PY="$cand"; break; fi
+  done
+fi
+if [ -z "${PY:-}" ]; then
+  echo "ERROR: 未找到 python/python3, 请先确认 python 位置或设置 PY=/path/to/python 后重试"
   exit 1
 fi
 
