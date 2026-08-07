@@ -56,10 +56,16 @@ def prep_math500():
 
 
 def _norm_aime(row):
-    """兼容不同数据集字段名"""
+    """兼容不同数据集字段名 (problem/question/text + answer/expected_answer)"""
+    ans = row.get("answer")
+    if ans is None:
+        ans = row.get("expected_answer", "")
     return {"problem": (row.get("problem") or row.get("question") or row.get("text")
                         or row.get("prompt") or ""),
-            "answer": str(row.get("answer", ""))}
+            "answer": str(ans)}
+
+
+ASSET_AIME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "aime24.json")
 
 
 def prep_aime24():
@@ -67,24 +73,32 @@ def prep_aime24():
         log("AIME24 已存在, 跳过"); return
     from datasets import load_dataset
     rows = None
-    # 1) HF 多候选 (hf-mirror 缓存情况不一)
-    for ds_id in ("Hothan/AIME-2024", "di-zhang-fdu/AIME_2024",
-                  "HuggingFaceH4/aime_2024", "Maxwell-Jia/AIME_2024",
-                  "math-ai/aime24"):
+    # 1) HF 多候选 (zwhe99/AIME90 为 AIME 2022-2024 官方镜像, 含 2024 split)
+    for ds_id in ("zwhe99/AIME90", "HuggingFaceH4/aime_2024", "MathArena/aime_2024_I",
+                  "Hothan/AIME-2024", "di-zhang-fdu/AIME_2024", "Maxwell-Jia/AIME_2024"):
         try:
             log(f"下载 AIME24 ({ds_id})")
             ds = load_dataset(ds_id, trust_remote_code=True)
-            split = "test" if "test" in ds else list(ds.keys())[0]
+            if "2024" in ds:
+                split = "2024"
+            elif "test" in ds:
+                split = "test"
+            else:
+                split = list(ds.keys())[0]
             rows = [_norm_aime(r) for r in ds[split]]
-            log(f"  HF 成功: {ds_id}")
+            log(f"  HF 成功: {ds_id} (split={split})")
             break
         except Exception as e:
             log(f"  HF {ds_id} 失败: {str(e)[:100]}")
     # 2) ModelScope 兜底 (国内速度快, git clone 免登录)
     if not rows:
         rows = _aime_from_modelscope()
+    # 3) 仓库内置 30 题 (100% 可用, 无网络依赖)
+    if not rows and os.path.exists(ASSET_AIME):
+        log(f"使用内置数据: {ASSET_AIME}")
+        rows = json.load(open(ASSET_AIME))
     if not rows:
-        log("ERROR: AIME24 所有数据源均失败 (HF 镜像 + ModelScope)")
+        log("ERROR: AIME24 所有数据源均失败 (HF 镜像 + ModelScope + 内置文件)")
         raise SystemExit(1)
     save("aime24", rows)
 
