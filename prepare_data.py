@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import random
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
@@ -35,8 +36,26 @@ def load_raw(name):
     return json.load(open(path)) if os.path.exists(path) else None
 
 
+def _aime24_problems():
+    """AIME24 评测题问题文本集合 (归一化), 用于训练抽样排除, 防评测泄漏"""
+    paths = [os.path.join(C.RAW_DIR, "aime24.json"), ASSET_AIME]
+    for p in paths:
+        if os.path.exists(p):
+            return {re.sub(r"\s+", " ", r["problem"]).strip() for r in json.load(open(p))}
+    return set()
+
+
+def _is_aime_dup(problem, aime_probs):
+    """problem 与任一 AIME24 题文本相同/互相包含则视为重复"""
+    p = re.sub(r"\s+", " ", problem).strip()
+    for a in aime_probs:
+        if p == a or (len(p) > 50 and (p in a or a in p)):
+            return True
+    return False
+
+
 def prep_deepscaler():
-    """DeepScaleR 40.3k 竞赛级数学题 -> 抽样 TRAIN_NUM 作为训练蒸馏数据源"""
+    """DeepScaleR 40.3k 竞赛级数学题 -> 排除 AIME24 重复题 -> 抽样 TRAIN_NUM 作为训练蒸馏数据源"""
     if load_raw("deepscaler"):
         log("DeepScaleR 已存在, 跳过"); return
     from datasets import load_dataset
@@ -57,6 +76,12 @@ def prep_deepscaler():
     if not rows:
         log("ERROR: DeepScaleR 下载失败, 所有候选数据集均不可用")
         raise SystemExit(1)
+    # 防评测泄漏: 排除与 AIME24 评测集重复的题
+    aime_probs = _aime24_problems()
+    if aime_probs:
+        before = len(rows)
+        rows = [r for r in rows if not _is_aime_dup(r["problem"], aime_probs)]
+        log(f"  排除 AIME24 重复题: {before} -> {len(rows)}")
     random.seed(C.TRAIN_SEED)
     random.shuffle(rows)
     rows = rows[:C.TRAIN_NUM]
