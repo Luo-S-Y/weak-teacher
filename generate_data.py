@@ -1,10 +1,10 @@
-"""Step 1: 教师数据生成 (GSM8K 训练集)
+"""Step 1: 训练数据生成 (DeepScaleR 训练集)
 - 主教师 Qwen2.5-0.5B: 生成 CoT 轨迹 + 每 token logprob (E1)
 - 自一致性: 主教师 K 次采样答案 (E2)
-- 规则判题: 与 GSM8K 标准答案比对 (E3)
+- 规则判题: 与 DeepScaleR 标准答案比对 (E3)
 - 学生基线: Qwen3-0.7B 生成答案 (E4, on-policy 近似)
 - 辅助教师 Qwen2.5-1.5B: 投票答案 (E5)
-输出: data/generated/gsm8k.jsonl (已存在则跳过)
+输出: data/generated/train.jsonl (已存在则跳过)
 
 用法: python generate_data.py  (SKIP_SC=1 可跳过自一致性加速)
 """
@@ -18,7 +18,7 @@ import config as C
 from utils import (log, save_jsonl, extract_answer,
                    is_correct_by_rule, build_messages)
 
-OUT = os.path.join(C.GEN_DIR, "gsm8k.jsonl")
+OUT = os.path.join(C.GEN_DIR, "train.jsonl")
 
 
 def get_tokenizer(model_id):
@@ -92,18 +92,18 @@ def main():
     if os.path.exists(OUT):
         log(f"已完成: {OUT} (删除可重新生成)"); return
 
-    # ---------- 1. GSM8K (读 prepare_data.py 缓存) ----------
-    raw_path = os.path.join(C.RAW_DIR, "gsm8k_train.json")
+    # ---------- 1. 训练数据源 (DeepScaleR, 读 prepare_data.py 缓存) ----------
+    raw_path = os.path.join(C.RAW_DIR, "deepscaler.json")
     if not os.path.exists(raw_path):
-        log("未找到 gsm8k_train.json, 先运行: python prepare_data.py")
+        log("未找到 deepscaler.json, 先运行: python prepare_data.py")
         sys.exit(1)
-    log(f"加载 GSM8K 训练集: {raw_path}")
+    log(f"加载训练数据 DeepScaleR: {raw_path}")
     tok_main = get_tokenizer(C.TEACHER_MAIN)
     problems, golds = [], []
     for row in json.load(open(raw_path)):
         if len(tok_main(row["problem"]).input_ids) <= C.MAX_PROBLEM_LEN:
             problems.append(row["problem"])
-            golds.append(row["gold"])
+            golds.append(row["answer"])
     log(f"有效问题: {len(problems)}")
 
     # ---------- 2. 主教师生成 (含 logprob) ----------

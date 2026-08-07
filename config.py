@@ -28,7 +28,11 @@ TEACHER_MAIN = "Qwen/Qwen2.5-0.5B-Instruct"       # 主弱教师 (极端弱)
 TEACHER_EXTRA = "Qwen/Qwen2.5-1.5B-Instruct"      # 辅助教师 (E5 投票 / 强度对照)
 
 # ---------- 数据 ----------
-# 评测数据集: 阶段 A 用 AIME24 (MATH500 部分镜像需认证, 备用 --math500 可下载)
+# 训练数据源: DeepScaleR (40.3k 竞赛级数学题 AMC/AIME/MATH), 作为弱教师蒸馏训练数据
+TRAIN_DATASETS = ("pe-nlp/DeepScaleR-40k-Prompt", "lime-nlp/DeepScaleR_Difficulty")
+TRAIN_NUM = 8000            # 训练样本抽样数 (全量 40.3k 生成/训练成本过高, 可按需调大)
+TRAIN_SEED = 42
+# 评测数据集: 阶段 A 用 AIME24 (内置兜底)
 AIME24_DATASET = "Hothan/AIME-2024"
 AIME24_SPLIT = "test"
 MATH500_DATASET = "Hothan/MATH500"

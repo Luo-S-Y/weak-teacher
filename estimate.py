@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
 from utils import log, load_jsonl
 
-OUT_JSONL = os.path.join(C.GEN_DIR, "gsm8k.jsonl")
+OUT_JSONL = os.path.join(C.GEN_DIR, "train.jsonl")
 BASE_NPZ = os.path.join(C.TOKEN_DIR, "base.npz")
 RUNS_META = os.path.join(C.WEIGHT_DIR, "runs.json")
 

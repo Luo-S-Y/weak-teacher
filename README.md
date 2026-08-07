@@ -1,12 +1,12 @@
 # 弱教师信号的可信度加权蒸馏 — 阶段 A 复现代码
 
 > 方案: `weak-teacher-credibility-experiment.md` | 目标环境: **AutoDL 4090 (24GB, CUDA>=12.1)**
-> 与方案的差异（按已确认决策调整）: 学生用 **Qwen3-0.7B-Instruct**（方案写 1.5B）; 弱教师池首期用**小规模教师**（Qwen2.5-0.5B 主 / 1.5B 辅助投票），截断教师后置; 数学域 GSM8K→AIME24（评测集，MATH500 部分镜像需认证，备用）。
+> 与方案的差异（按已确认决策调整）: 学生用 **Qwen3-0.7B-Instruct**（方案写 1.5B）; 弱教师池首期用**小规模教师**（Qwen2.5-0.5B 主 / 1.5B 辅助投票），截断教师后置; 训练数据用 **DeepScaleR**（40.3k 竞赛级数学题, 抽样 8k, 替代方案 GSM8K）; 评测用 **AIME24**（内置 30 题兜底, 免下载）。
 
 ## 实验设计
 
 ```
-教师池(0.5B/1.5B) ──生成 CoT+logprob──> GSM8K 训练集 7473 条
+教师池(0.5B/1.5B) ──生成 CoT+logprob──> DeepScaleR 训练集 8000 条(抽样)
     │                                      │
     │  E0 恒1.0  E1 自报置信度  E2 自一致性(K=8)     │
     │  E3 规则验证器  E4 师生一致  E5 双师投票  E6 混合 │
@@ -34,14 +34,14 @@ bash run_all.sh                  # 全流程 (预计 ~10h)
 
 | 命令 | 说明 |
 |---|---|
-| `python prepare_data.py` | 下载并缓存 GSM8K(train/test) + AIME24 → `data/raw/*.json`（幂等）。`--math500`/`--code`/`--all` 下载备用数据集 |
-| `python generate_data.py` | 教师生成 CoT + 每 token logprob + 自一致性(K=8) + 学生基线 + 辅助教师投票。`SKIP_SC=1` 跳过自一致性省 ~3h |
+| `python prepare_data.py` | 下载 DeepScaleR(抽样 8k, `TRAIN_NUM` 可调) + AIME24 → `data/raw/*.json`（幂等）。AIME24 有内置兜底; `--gsm8k`/`--math500`/`--code` 下载备用数据集 |
+| `python generate_data.py` | 教师生成 CoT + 每 token logprob + 自一致性(K=8) + 学生基线 + 辅助教师投票。`SKIP_SC=1` 跳过自一致性省时 |
 | `python estimate.py` | 计算 E0–E6 置信度, 组装 42 组训练权重 |
 | `python train.py --all` | 训练 42 组 (缺什么训什么, 可断点续跑)。单组 `python train.py E3_W1` |
 | `python eval.py --all` | AIME24 评测 (vLLM, 失败自动回退 transformers) |
 | `python report.py` | 汇总报告 → `results/report.md` |
 
-数据流: `prepare_data.py` → `data/raw/*.json` → `generate_data.py` → `data/generated/gsm8k.jsonl` → `estimate.py` → `data/tokenized/base.npz` + `data/weights/*.npz` → `train.py` → `checkpoints/` → `eval.py` → `results/`。
+数据流: `prepare_data.py` → `data/raw/*.json` → `generate_data.py` → `data/generated/train.jsonl` → `estimate.py` → `data/tokenized/base.npz` + `data/weights/*.npz` → `train.py` → `checkpoints/` → `eval.py` → `results/`。
 
 ## 配置 (config.py)
 
@@ -61,10 +61,10 @@ bash run_all.sh                  # 全流程 (预计 ~10h)
 
 - 相对增益 = (加权 − E0_W0)/E0_W0, 验证 H1 (加权是否优于不加权)
 - 每估计器最佳机制对比验证 H2 (规则验证器是否最优)
-- 预计 0.5B 教师 GSM8K 正确率 ~15–25%, 大量低置信样本 → 正是加权要检验的场景
+- 预计 0.5B 教师在 DeepScaleR 竞赛题上正确率很低 (<10%), 大量低置信样本 → 正是加权要检验的场景
 
 ## 已知限制
 
 - `eval.py` 每组合独立加载 vLLM 模型 (~30s/次), 42 组评测 overhead ~20min
-- 自一致性 + 辅助教师 + 学生基线生成共 ~3h (0.5B/1.5B/0.7B 各 8K 条)
+- 自一致性 + 辅助教师 + 学生基线生成共 ~3h (0.5B/1.5B/0.7B 各 8K 条); 若 `TRAIN_NUM` 调大按比例增加
 - 若 TRL 0.15.1 处理 tokenize 数据集报错, 反馈后回退方案: 改用 transformers `Trainer` 子类 (loss 逻辑不变)

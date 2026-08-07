@@ -1,18 +1,20 @@
-"""Step 0: 数据集准备 (方案 2.3)
-- 默认: GSM8K (train/test) + AIME24 (阶段 A 评测) -> data/raw/*.json (归一化, 幂等)
-- 可选: --math500 | --code HumanEval/MBPP | --all 全部 (阶段 B 备用)
+"""Step 0: 数据集准备
+- 默认: DeepScaleR (训练, 40.3k 抽样 8k) + AIME24 (评测, 内置兜底) -> data/raw/*.json
+- 可选: --gsm8k 备用 | --math500 | --code | --all
 
-用法: python prepare_data.py [--math500] [--code] [--all]
+用法: python prepare_data.py [--gsm8k] [--math500] [--code] [--all]
 """
 import os
 import sys
 import json
+import random
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
 from utils import log, gsm8k_gold_answer
 
 RAWS = {
+    "deepscaler": "deepscaler.json",
     "gsm8k_train": "gsm8k_train.json",
     "gsm8k_test": "gsm8k_test.json",
     "math500": "math500.json",
@@ -31,6 +33,34 @@ def save(name, rows):
 def load_raw(name):
     path = os.path.join(C.RAW_DIR, RAWS[name])
     return json.load(open(path)) if os.path.exists(path) else None
+
+
+def prep_deepscaler():
+    """DeepScaleR 40.3k 竞赛级数学题 -> 抽样 TRAIN_NUM 作为训练蒸馏数据源"""
+    if load_raw("deepscaler"):
+        log("DeepScaleR 已存在, 跳过"); return
+    from datasets import load_dataset
+    rows = None
+    for ds_id in C.TRAIN_DATASETS:
+        try:
+            log(f"下载 DeepScaleR ({ds_id})")
+            ds = load_dataset(ds_id, trust_remote_code=True)
+            split = "train" if "train" in ds else list(ds.keys())[0]
+            rows = [{"problem": r.get("problem", ""),
+                     "answer": str(r.get("ground_truth_answer") or r.get("ground_truth") or "")}
+                    for r in ds[split]]
+            rows = [r for r in rows if r["problem"] and r["answer"]]
+            log(f"  成功: {ds_id} 共 {len(rows)} 题")
+            break
+        except Exception as e:
+            log(f"  {ds_id} 失败: {str(e)[:100]}")
+    if not rows:
+        log("ERROR: DeepScaleR 下载失败, 所有候选数据集均不可用")
+        raise SystemExit(1)
+    random.seed(C.TRAIN_SEED)
+    random.shuffle(rows)
+    rows = rows[:C.TRAIN_NUM]
+    save("deepscaler", rows)
 
 
 def prep_gsm8k():
@@ -150,14 +180,16 @@ def prep_code():
 
 def main():
     flags = sys.argv[1:]
-    prep_gsm8k()
+    prep_deepscaler()
     prep_aime24()
+    if "--all" in flags or "--gsm8k" in flags:
+        prep_gsm8k()
     if "--all" in flags or "--math500" in flags:
         prep_math500()
     if "--all" in flags or "--code" in flags:
         prep_code()
     log("数据集准备完成: " + ", ".join(RAWS.values()))
-    print("默认已就绪: GSM8K train/test + AIME24 (阶段 A 评测用)", flush=True)
+    print(f"默认已就绪: DeepScaleR(抽样{C.TRAIN_NUM}) 训练 + AIME24 评测", flush=True)
 
 
 if __name__ == "__main__":
