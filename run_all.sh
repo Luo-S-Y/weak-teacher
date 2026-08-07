@@ -11,7 +11,7 @@ echo "========== Step 2/6 可信度估计 =========="
 "$PY" estimate.py
 echo "========== Step 3/6 加权训练 (42 组) =========="
 "$PY" train.py --all
-echo "========== Step 4/6 MATH500 评测 =========="
+echo "========== Step 4/6 AIME24 评测 =========="
 "$PY" eval.py --all
 echo "========== Step 5/6 报告 =========="
 "$PY" report.py --cleanup

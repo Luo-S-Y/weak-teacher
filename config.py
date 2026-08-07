@@ -23,6 +23,9 @@ TEACHER_MAIN = "Qwen/Qwen2.5-0.5B-Instruct"       # 主弱教师 (极端弱)
 TEACHER_EXTRA = "Qwen/Qwen2.5-1.5B-Instruct"      # 辅助教师 (E5 投票 / 强度对照)
 
 # ---------- 数据 ----------
+# 评测数据集: 阶段 A 用 AIME24 (MATH500 部分镜像需认证, 备用 --math500 可下载)
+AIME24_DATASET = "Hothan/AIME-2024"
+AIME24_SPLIT = "test"
 MATH500_DATASET = "Hothan/MATH500"
 MATH500_SPLIT = "test"
 MAX_LEN = 2048                                    # 输入截断 (方案 max_len 2048)

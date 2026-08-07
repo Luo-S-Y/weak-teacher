@@ -1,7 +1,7 @@
 # 弱教师信号的可信度加权蒸馏 — 阶段 A 复现代码
 
 > 方案: `weak-teacher-credibility-experiment.md` | 目标环境: **AutoDL 4090 (24GB, CUDA>=12.1)**
-> 与方案的差异（按已确认决策调整）: 学生用 **Qwen3-0.7B-Instruct**（方案写 1.5B）; 弱教师池首期用**小规模教师**（Qwen2.5-0.5B 主 / 1.5B 辅助投票），截断教师后置; 数学域 GSM8K→MATH500。
+> 与方案的差异（按已确认决策调整）: 学生用 **Qwen3-0.7B-Instruct**（方案写 1.5B）; 弱教师池首期用**小规模教师**（Qwen2.5-0.5B 主 / 1.5B 辅助投票），截断教师后置; 数学域 GSM8K→AIME24（评测集，MATH500 部分镜像需认证，备用）。
 
 ## 实验设计
 
@@ -16,7 +16,7 @@
     ▼
 TRL SFTTrainer 加权训练 (Qwen3-0.7B 全参, 1 epoch)
     ▼
-MATH500 评测 → report.md (基线 E0_W0, 相对增益, top 组合)
+AIME24 评测 → report.md (基线 E0_W0, 相对增益, top 组合)
 ```
 
 ## 快速开始 (AutoDL)
@@ -34,11 +34,11 @@ bash run_all.sh                  # 全流程 (预计 ~10h)
 
 | 命令 | 说明 |
 |---|---|
-| `python prepare_data.py` | 下载并缓存 GSM8K(train/test) + MATH500 → `data/raw/*.json`（幂等）。`--code`/`--aime`/`--all` 下载阶段 B 用的代码域/AIME24 |
+| `python prepare_data.py` | 下载并缓存 GSM8K(train/test) + AIME24 → `data/raw/*.json`（幂等）。`--math500`/`--code`/`--all` 下载备用数据集 |
 | `python generate_data.py` | 教师生成 CoT + 每 token logprob + 自一致性(K=8) + 学生基线 + 辅助教师投票。`SKIP_SC=1` 跳过自一致性省 ~3h |
 | `python estimate.py` | 计算 E0–E6 置信度, 组装 42 组训练权重 |
 | `python train.py --all` | 训练 42 组 (缺什么训什么, 可断点续跑)。单组 `python train.py E3_W1` |
-| `python eval.py --all` | MATH500 评测 (vLLM, 失败自动回退 transformers) |
+| `python eval.py --all` | AIME24 评测 (vLLM, 失败自动回退 transformers) |
 | `python report.py` | 汇总报告 → `results/report.md` |
 
 数据流: `prepare_data.py` → `data/raw/*.json` → `generate_data.py` → `data/generated/gsm8k.jsonl` → `estimate.py` → `data/tokenized/base.npz` + `data/weights/*.npz` → `train.py` → `checkpoints/` → `eval.py` → `results/`。

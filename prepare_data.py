@@ -1,8 +1,8 @@
 """Step 0: 数据集准备 (方案 2.3)
-- 默认: GSM8K (train/test) + MATH500  -> data/raw/*.json (归一化, 幂等)
-- 可选: --code HumanEval/MBPP | --aime AIME24 | --all 全部 (供阶段 B 使用)
+- 默认: GSM8K (train/test) + AIME24 (阶段 A 评测) -> data/raw/*.json (归一化, 幂等)
+- 可选: --math500 | --code HumanEval/MBPP | --all 全部 (阶段 B 备用)
 
-用法: python prepare_data.py [--code] [--aime] [--all]
+用法: python prepare_data.py [--math500] [--code] [--all]
 """
 import os
 import sys
@@ -59,8 +59,17 @@ def prep_aime24():
     if load_raw("aime24"):
         log("AIME24 已存在, 跳过"); return
     from datasets import load_dataset
-    log("下载 AIME24 (Hothan/AIME-2024)")
-    ds = load_dataset("Hothan/AIME-2024", trust_remote_code=True)
+    for ds_id in ("Hothan/AIME-2024", "di-zhang-fdu/AIME_2024"):
+        try:
+            log(f"下载 AIME24 ({ds_id})")
+            ds = load_dataset(ds_id, trust_remote_code=True)
+            break
+        except Exception as e:
+            log(f"  {ds_id} 失败: {str(e)[:120]}")
+            ds = None
+    if ds is None:
+        log("ERROR: AIME24 下载失败 (两个候选数据集均不可用)")
+        raise SystemExit(1)
     split = "test" if "test" in ds else list(ds.keys())[0]
     rows = [{"problem": r["problem"], "answer": r["answer"]} for r in ds[split]]
     save("aime24", rows)
@@ -97,13 +106,13 @@ def prep_code():
 def main():
     flags = sys.argv[1:]
     prep_gsm8k()
-    prep_math500()
-    if "--all" in flags or "--aime" in flags:
-        prep_aime24()
+    prep_aime24()
+    if "--all" in flags or "--math500" in flags:
+        prep_math500()
     if "--all" in flags or "--code" in flags:
         prep_code()
     log("数据集准备完成: " + ", ".join(RAWS.values()))
-    print("默认已就绪: GSM8K train/test + MATH500 (阶段 A 用)", flush=True)
+    print("默认已就绪: GSM8K train/test + AIME24 (阶段 A 评测用)", flush=True)
 
 
 if __name__ == "__main__":

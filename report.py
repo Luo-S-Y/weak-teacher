@@ -1,5 +1,5 @@
 """Step 5: 结果汇总报告 (阶段 A 粗筛分析)
-- 对比 42 组 MATH500 准确率, 基线 E0_W0, 相对增益
+- 对比 42 组 AIME24 准确率, 基线 E0_W0, 相对增益
 - 每估计器最佳机制 / 每机制最佳估计器
 用法: python report.py [--cleanup]   (--cleanup: 删除 checkpoint 省磁盘, KEEP_MODEL=1 时跳过)
 """
@@ -31,7 +31,7 @@ def main():
 
     base = runs.get("E0_W0", {}).get("accuracy", 0)
     import time
-    lines = ["# 弱教师可信度加权 - 阶段 A 粗筛报告 (MATH500)",
+    lines = ["# 弱教师可信度加权 - 阶段 A 粗筛报告 (AIME24)",
              f"\n生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}",
              f"\n基线 E0_W0 (无加权弱教师蒸馏): {base*100:.1f}%",
              f"\n| run | 估计器 | 机制 | 样本数 | 准确率 | 相对增益 |",

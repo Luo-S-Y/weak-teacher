@@ -1,4 +1,4 @@
-"""Step 4: MATH500 评测 (阶段 A 筛选指标)
+"""Step 4: AIME24 评测 (阶段 A 筛选指标)
 - vLLM 批量评测 (4090 推荐, vllm>=0.8.5), 失败自动回退 transformers generate
 - 学生评测关闭 thinking (enable_thinking=False), 与蒸馏数据分布一致
 用法: python eval.py --all | python eval.py E3_W1
@@ -13,10 +13,11 @@ import config as C
 from utils import log, extract_answer, answers_match
 
 
-def load_math500():
-    path = os.path.join(C.RAW_DIR, "math500.json")
+def load_bench():
+    """阶段 A 评测集 = AIME24 (data/raw/aime24.json)"""
+    path = os.path.join(C.RAW_DIR, "aime24.json")
     if not os.path.exists(path):
-        log("未找到 math500.json, 先运行: python prepare_data.py")
+        log("未找到 aime24.json, 先运行: python prepare_data.py")
         sys.exit(1)
     items = []
     for row in json.load(open(path)):
@@ -79,7 +80,7 @@ def eval_one(run_name):
     ckpt_dir = os.path.join(C.CKPT_DIR, run_name)
     if not os.path.isfile(os.path.join(ckpt_dir, "config.json")):
         log(f"{run_name} checkpoint 不存在, 跳过"); return None
-    items = load_math500()
+    items = load_bench()
     try:
         texts = eval_vllm(ckpt_dir, items)
         backend = "vllm"
