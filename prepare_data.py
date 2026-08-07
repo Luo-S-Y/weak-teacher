@@ -55,24 +55,55 @@ def prep_math500():
     save("math500", rows)
 
 
+def _norm_aime(row):
+    """兼容不同数据集字段名"""
+    return {"problem": (row.get("problem") or row.get("question") or row.get("text")
+                        or row.get("prompt") or ""),
+            "answer": str(row.get("answer", ""))}
+
+
 def prep_aime24():
     if load_raw("aime24"):
         log("AIME24 已存在, 跳过"); return
     from datasets import load_dataset
-    for ds_id in ("Hothan/AIME-2024", "di-zhang-fdu/AIME_2024"):
+    rows = None
+    # 1) HF 多候选 (hf-mirror 缓存情况不一)
+    for ds_id in ("Hothan/AIME-2024", "di-zhang-fdu/AIME_2024",
+                  "HuggingFaceH4/aime_2024", "Maxwell-Jia/AIME_2024",
+                  "math-ai/aime24"):
         try:
             log(f"下载 AIME24 ({ds_id})")
             ds = load_dataset(ds_id, trust_remote_code=True)
+            split = "test" if "test" in ds else list(ds.keys())[0]
+            rows = [_norm_aime(r) for r in ds[split]]
+            log(f"  HF 成功: {ds_id}")
             break
         except Exception as e:
-            log(f"  {ds_id} 失败: {str(e)[:120]}")
-            ds = None
-    if ds is None:
-        log("ERROR: AIME24 下载失败 (两个候选数据集均不可用)")
+            log(f"  HF {ds_id} 失败: {str(e)[:100]}")
+    # 2) ModelScope 兜底 (国内速度快, git clone 免登录)
+    if not rows:
+        rows = _aime_from_modelscope()
+    if not rows:
+        log("ERROR: AIME24 所有数据源均失败 (HF 镜像 + ModelScope)")
         raise SystemExit(1)
-    split = "test" if "test" in ds else list(ds.keys())[0]
-    rows = [{"problem": r["problem"], "answer": r["answer"]} for r in ds[split]]
     save("aime24", rows)
+
+
+def _aime_from_modelscope():
+    import subprocess, tempfile, glob
+    tmp = tempfile.mkdtemp(prefix="aime24_ms_")
+    cmd = ["git", "clone", "--depth", "1",
+           "https://www.modelscope.cn/datasets/HuggingFaceH4/aime_2024.git", tmp]
+    log("ModelScope 兜底: git clone HuggingFaceH4/aime_2024 ...")
+    if subprocess.run(cmd, capture_output=True).returncode != 0:
+        return None
+    rows = []
+    for fp in glob.glob(os.path.join(tmp, "**", "*.jsonl"), recursive=True):
+        for line in open(fp):
+            line = line.strip()
+            if line:
+                rows.append(_norm_aime(json.loads(line)))
+    return rows
 
 
 def prep_code():
