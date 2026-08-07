@@ -2,10 +2,11 @@
 # ============================================================
 # AutoDL 4090 一键部署脚本 (opd 实验)
 # 功能: 权限配置 + 清华 pip 镜像 + HF 镜像 + 依赖安装 + 环境验证
+# 说明: 不初始化 conda, 直接装到当前 python (AutoDL 默认 python 即可)
 #
 # 用法:
 #   bash setup.sh                 # 默认: 训练环境 (trl==0.15.1) + vllm 评测加速
-#   CONDA_ENV=myenv bash setup.sh # 在指定 conda 环境安装 (默认 base, AutoDL 自带 torch)
+#   PY=/path/to/python bash setup.sh  # 指定解释器
 #
 # 环境变量:
 #   AUTODL_TMP=0  # 禁用数据盘软链 (默认自动把 checkpoints/results 链到 /root/autodl-tmp)
@@ -15,8 +16,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 若 base 环境已自带可用 torch 则不重装, 用 PY 覆盖可换解释器
-CONDA_ENV="${CONDA_ENV:-base}"
+# 直接使用当前 python (默认 python, 可用 PY 覆盖)
 PY="${PY:-python}"
 
 echo "==================== AutoDL 4090 部署 ===================="
@@ -68,13 +68,9 @@ trusted-host = pypi.tuna.tsinghua.edu.cn
 EOF
 echo "  已写入 ~/.pip/pip.conf"
 
-# ---------- [2/5] conda 环境 + HF 镜像 ----------
+# ---------- [2/5] 确认 python + HF 镜像 ----------
 echo ""
-echo "[2/5] 激活 conda 环境 ($CONDA_ENV) + HF 镜像..."
-if [ "$CONDA_ENV" != "base" ]; then
-  source "$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh" 2>/dev/null || true
-  conda activate "$CONDA_ENV" 2>/dev/null || echo "  WARNING: conda 环境 $CONDA_ENV 不存在, 继续用默认 python"
-fi
+echo "[2/5] 确认 python + HF 镜像..."
 echo "  Python: $("$PY" --version 2>/dev/null || python --version)"
 PY="$(command -v "$PY" 2>/dev/null || command -v python)"
 echo "  使用: $PY"
