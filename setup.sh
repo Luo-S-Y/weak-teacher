@@ -61,7 +61,11 @@ echo "  数据目录 OK (data/ checkpoints/ results/)"
 if [ -d /root/autodl-tmp ] && [ "${AUTODL_TMP:-1}" != "0" ]; then
   for d in checkpoints results; do
     target="/root/autodl-tmp/opd_$d"
-    if [ ! -e "$target" ]; then mkdir -p "$target"; fi
+    # 目标不可创建(数据盘未挂载/只读)则跳过软链, 用本机目录
+    if [ ! -d "$target" ] && ! mkdir -p "$target" 2>/dev/null; then
+      echo "  WARNING: 无法创建 $target, $d 使用本机目录"
+      continue
+    fi
     if [ ! -L "$d" ]; then
       mv "$d" "$d.bak" 2>/dev/null || true
       ln -s "$target" "$d"

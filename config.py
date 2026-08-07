@@ -15,6 +15,11 @@ EVAL_DIR = os.path.join(BASE, "results")           # 评测结果与报告
 LOG_DIR = os.path.join(EVAL_DIR, "logs")           # 训练 loss 日志
 
 for d in (DATA_DIR, RAW_DIR, GEN_DIR, TOKEN_DIR, WEIGHT_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
+    # 防御: 失效软链或误建的普通文件会导致 os.makedirs(exist_ok=True) 报 FileExistsError
+    if os.path.isdir(d):
+        continue
+    if os.path.exists(d) or os.path.islink(d):
+        os.remove(d)
     os.makedirs(d, exist_ok=True)
 
 # ---------- 模型 ----------
