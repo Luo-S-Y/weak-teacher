@@ -16,8 +16,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 直接使用当前 python (默认 python, 可用 PY 覆盖)
-PY="${PY:-python}"
+# 自动探测 python (python -> python3), 可用 PY=/path/to/python 覆盖
+if [ -n "${PY:-}" ]; then
+  :
+elif command -v python >/dev/null 2>&1; then
+  PY=python
+elif command -v python3 >/dev/null 2>&1; then
+  PY=python3
+else
+  echo "ERROR: 未找到 python/python3, 请设置 PY=/path/to/python 后重试"
+  exit 1
+fi
 
 echo "==================== AutoDL 4090 部署 ===================="
 echo "工作目录: $SCRIPT_DIR"
@@ -71,8 +80,8 @@ echo "  已写入 ~/.pip/pip.conf"
 # ---------- [2/5] 确认 python + HF 镜像 ----------
 echo ""
 echo "[2/5] 确认 python + HF 镜像..."
-echo "  Python: $("$PY" --version 2>/dev/null || python --version)"
-PY="$(command -v "$PY" 2>/dev/null || command -v python)"
+echo "  Python: $("$PY" --version 2>/dev/null || echo '版本信息不可用')"
+PY="$(command -v "$PY" 2>/dev/null || echo "$PY")"
 echo "  使用: $PY"
 grep -q "HF_ENDPOINT" ~/.bashrc 2>/dev/null || echo 'export HF_ENDPOINT=https://hf-mirror.com' >> ~/.bashrc
 export HF_ENDPOINT=https://hf-mirror.com
