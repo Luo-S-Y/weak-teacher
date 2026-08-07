@@ -80,28 +80,28 @@ echo "  HF_ENDPOINT=https://hf-mirror.com"
 
 # ---------- [3/5] 依赖安装 ----------
 echo ""
-echo "[3/5] 安装依赖..."
-# 若 torch 已可用 (AutoDL base 自带) 则跳过重装, 避免破坏 CUDA 匹配
-if "$PY" -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-  echo "  torch 已可用, 跳过重装 (仅补装其余依赖)"
+echo "[3/5] 安装依赖 (锁定 torch==2.6.0)..."
+# 已装 torch 2.6.0 则跳过, 否则统一装 2.6.0 (PyPI 默认 CUDA 12.4 wheel, 4090 兼容)
+if "$PY" -c "import torch; assert torch.__version__ == '2.6.0'" 2>/dev/null; then
+  echo "  torch==2.6.0 已就绪, 跳过重装 (仅补装其余依赖)"
   "$PY" -m pip install "transformers>=4.49" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
 else
-  echo "  torch 不可用, 安装 CUDA 版 torch..."
-  "$PY" -m pip install torch "transformers>=4.49" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
+  echo "  安装 torch==2.6.0 + 其余依赖..."
+  "$PY" -m pip install torch==2.6.0 "transformers>=4.49" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
 fi
 
-# ---------- [4/5] vLLM 评测加速 (直接装当前环境) ----------
+# ---------- [4/5] vLLM 评测加速 (锁定 0.8.5, 与训练同环境) ----------
 echo ""
-echo "[4/5] 安装 vllm (评测加速, 与训练同环境)..."
-if "$PY" -c "import vllm" 2>/dev/null; then
-  echo "  vllm 已安装: $("$PY" -c "import vllm; print(vllm.__version__)")"
+echo "[4/5] 安装 vllm==0.8.5 (评测加速, 与训练同环境)..."
+if "$PY" -c "import vllm; assert vllm.__version__ == '0.8.5'" 2>/dev/null; then
+  echo "  vllm==0.8.5 已安装"
 else
-  if "$PY" -m pip install "vllm>=0.8.5" > /tmp/opd_vllm_install.log 2>&1; then
-    echo "  vllm OK"
+  if "$PY" -m pip install "vllm==0.8.5" > /tmp/opd_vllm_install.log 2>&1; then
+    echo "  vllm==0.8.5 OK"
   else
-    echo "  WARNING: vllm 安装失败, 日志: /tmp/opd_vllm_install.log"
+    echo "  WARNING: vllm==0.8.5 安装失败, 日志: /tmp/opd_vllm_install.log"
     echo "          评测将自动回退 transformers (eval.py 内置), 不影响训练。"
-    echo "          可尝试: pip install 'vllm==0.8.5' 或先升级 torch 再装 vllm。"
+    echo "          若因 torch 冲突, 请先: pip install torch==2.6.0 再重跑本脚本。"
   fi
 fi
 
