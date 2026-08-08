@@ -122,7 +122,8 @@ def prep_aime24():
 def prep_models():
     from huggingface_hub import snapshot_download
     import time
-    for mid in (C.STUDENT_MODEL, C.TEACHER_MAIN, C.TEACHER_EXTRA):
+    mids = (C.STUDENT_MODEL, C.TEACHER_MAIN, C.TEACHER_EXTRA, *C.EXTRA_MODELS)
+    for mid in mids:
         t0 = time.time()
         log(f"预下载模型 {mid} ...")
         snapshot_download(mid)
