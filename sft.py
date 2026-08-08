@@ -35,7 +35,7 @@ LORA_ALPHA = 32
 def check_env():
     import transformers
     major, minor = map(int, transformers.__version__.split(".")[:2])
-    if major < 4 or minor < 51:
+    if major < 4 or (major == 4 and minor < 51):
         raise SystemExit(
             f"Qwen3 需要 transformers>=4.51 (当前 {transformers.__version__}), "
             f"请执行: pip install 'transformers>=4.51'")
