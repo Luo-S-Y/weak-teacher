@@ -118,6 +118,38 @@ def prep_aime24():
     save("aime24.json", rows)
 
 
+# ---------- SFT 数据 (Qwen3-1.7B-Base sanity check: 1000 题带 R1 解答) ----------
+def prep_sft():
+    out = os.path.join(C.RAW_DIR, "sft1000.jsonl")
+    if os.path.exists(out):
+        log("sft1000.jsonl 已存在, 跳过"); return
+    from datasets import load_dataset
+    rows = None
+    for ds_id in ("pe-nlp/DeepScaleR-40k-Dedup", "lime-nlp/DeepScaleR_Dedup_40k"):
+        try:
+            log(f"下载 DeepScaleR 带解答版 ({ds_id})")
+            ds = load_dataset(ds_id, trust_remote_code=True)
+            split = "train" if "train" in ds else list(ds.keys())[0]
+            rows = ds[split]
+            log(f"  成功: {ds_id} 共 {len(rows)} 条")
+            break
+        except Exception as e:
+            log(f"  {ds_id} 失败: {str(e)[:100]}")
+    if not rows:
+        log("ERROR: DeepScaleR 带解答版下载失败 (需要含 solution 的数据做 SFT)")
+        return
+    random.seed(C.TRAIN_SEED)
+    cand = [r for r in rows if r.get("problem") and (r.get("solution") or r.get("answer"))]
+    random.shuffle(cand)
+    cand = cand[:1000]
+    with open(out, "w") as f:
+        for r in cand:
+            sol = r.get("solution") or r.get("answer")
+            f.write(json.dumps({"problem": r["problem"], "solution": sol},
+                               ensure_ascii=False) + "\n")
+    log(f"sft1000: {len(cand)} 条 -> {out}")
+
+
 # ---------- 模型预下载 (训练时 from_pretrained 直接命中本地缓存) ----------
 def prep_models():
     from huggingface_hub import snapshot_download
@@ -134,9 +166,11 @@ def main():
     flags = sys.argv[1:]
     prep_aime24()          # 先就绪 AIME24 (pool 去重需要)
     prep_pool()
+    if "--skip-sft" not in flags:
+        prep_sft()
     if "--no-models" not in flags:
         prep_models()
-    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测 + 模型缓存")
+    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测 + sft1000 + 模型缓存")
 
 
 if __name__ == "__main__":
