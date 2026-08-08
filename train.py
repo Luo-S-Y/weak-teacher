@@ -199,6 +199,7 @@ def load_teacher():
     tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    tok.padding_side = "left"          # decoder-only 生成必须左填充, 否则右填充干扰生成
     t0 = __import__("time").time()
     teacher = AutoModelForCausalLM.from_pretrained(C.TEACHER_MAIN, torch_dtype=dtype,
                                                    trust_remote_code=True,

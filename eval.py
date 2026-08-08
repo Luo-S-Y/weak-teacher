@@ -60,6 +60,7 @@ def eval_transformers(run_name, items):
     tok = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    tok.padding_side = "left"          # decoder-only 生成必须左填充
     prompts = build_prompts(items)
     texts, bs = [], 8
     for i in range(0, len(prompts), bs):
