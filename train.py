@@ -158,9 +158,17 @@ def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
         kl_raw = (p_t.detach() * (log_p_t_.detach() - log_q_t)).sum(-1)
         kl_mean = float((kl_raw * valid).sum() / valid.sum())
         gen_len = int(valid.sum().item() // B)
+    # rollout 真实输出 (取第一条有效轨迹, 用于日志展示/排查)
+    rollout_text, rollout_problem = "", ""
+    for b in range(B):
+        if valid[b].any():
+            rollout_text = tok.decode(new_toks[b][valid[b]], skip_special_tokens=True)
+            rollout_problem = problems[b]
+            break
     return {"loss": loss, "loss_val": float(loss.item()), "conf": float(c_t.detach().mean()),
             "conf_min": float(c_t.detach().min()), "conf_max": float(c_t.detach().max()),
-            "kl": kl_mean, "gen_len": gen_len, "valid_tokens": int(valid.sum().item())}
+            "kl": kl_mean, "gen_len": gen_len, "valid_tokens": int(valid.sum().item()),
+            "rollout": rollout_text, "problem": rollout_problem}
 
 
 # ==================== 训练入口 ====================
@@ -234,9 +242,14 @@ def train_one(run_name):
         tok_s = cum_tokens / (_t.time() - t_start)
         elapsed = _t.time() - t_start
         eta = elapsed / cum_steps * (C.STEPS - cum_steps) if cum_steps else 0
-        lf.write(json.dumps({"step": step, "loss": round(r["loss_val"], 4),
-                             "conf": round(r["conf"], 4), "kl": round(r["kl"], 4),
-                             "gen_len": r["gen_len"], "tok_s": round(tok_s, 1)}) + "\n")
+        # 指标写日志; 每 10 步额外附带 rollout 真实输出 (截断 400 字符)
+        entry = {"step": step, "loss": round(r["loss_val"], 4),
+                 "conf": round(r["conf"], 4), "kl": round(r["kl"], 4),
+                 "gen_len": r["gen_len"], "tok_s": round(tok_s, 1)}
+        if (step + 1) % 10 == 0 or step == C.STEPS - 1:
+            entry["rollout"] = r["rollout"][:400]
+            entry["problem"] = r["problem"][:200]
+        lf.write(json.dumps(entry, ensure_ascii=False) + "\n")
         if step == 0 or (step + 1) % 10 == 0 or step == C.STEPS - 1:
             pct = (step + 1) / C.STEPS * 100
             log(f"[{run_name}] step {step + 1}/{C.STEPS} ({pct:5.1f}%) | "
@@ -244,6 +257,7 @@ def train_one(run_name):
                 f"c={r['conf']:.3f}({r['conf_min']:.2f}~{r['conf_max']:.2f}) | "
                 f"len={r['gen_len']} | {tok_s:.0f} tok/s | "
                 f"步时={dt:.1f}s | 已用={elapsed/60:.1f}m | 剩余≈{eta/60:.1f}m")
+            log(f"    └ rollout: {r['rollout'][:220] or '(空)'}")
     lf.close()
     log(f"[{run_name}] 训练完成, 总耗时 {(_t.time()-t_start)/60:.1f}m, 平均 {cum_tokens/(_t.time()-t_start):.0f} tok/s")
 
