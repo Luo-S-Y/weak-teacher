@@ -45,7 +45,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--num", type=int, default=10)
     ap.add_argument("--max-new", type=int, default=1024)
+    ap.add_argument("--max-len", type=int, default=0,
+                    help="打印输出截断长度, 0=完整显示")
     args = ap.parse_args()
+
+    def show(txt):
+        return txt[:args.max_len] if args.max_len else txt
 
     rows = [json.loads(l) for l in open(SFT_PATH)]
     random.seed(42)
@@ -65,8 +70,8 @@ def main():
         nb += cb
         ns += cs
         print(f"\n{'='*80}\n#{i} 题目: {r['problem']}\n")
-        print(f"--- Base ({'OK' if cb else 'XX'}, pred={pred_b!r}, gold~{gold!r}) ---\n{out_b[:1000]}")
-        print(f"\n--- SFT  ({'OK' if cs else 'XX'}, pred={pred_s!r}, gold~{gold!r}) ---\n{out_s[:1000]}")
+        print(f"--- Base ({'OK' if cb else 'XX'}, pred={pred_b!r}, gold~{gold!r}) ---\n{show(out_b)}")
+        print(f"\n--- SFT  ({'OK' if cs else 'XX'}, pred={pred_s!r}, gold~{gold!r}) ---\n{show(out_s)}")
     log(f"答案匹配: Base {nb}/{len(sample)} | SFT {ns}/{len(sample)}")
 
 
