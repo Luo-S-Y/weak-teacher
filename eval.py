@@ -43,7 +43,6 @@ def eval_vllm(run_name, items):
     prompts = build_prompts(items)
     ckpt = os.path.join(C.CKPT_DIR, run_name)
     llm = LLM(model=ckpt, dtype="bfloat16", trust_remote_code=True,
-              tokenizer_mode="fast",   # 规避 vLLM slow Qwen2Tokenizer 访问 all_special_tokens_extended 报错
               max_model_len=C.MAX_LEN, gpu_memory_utilization=0.85,
               enforce_eager=True)
     sp = SamplingParams(max_tokens=C.EVAL_MAX_NEW, temperature=0.0)
