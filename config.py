@@ -45,6 +45,7 @@ MAX_PROBLEM_LEN = 512                              # 训练问题最大长度 (�
 ROLLOUT_MAX_NEW = 100                              # 学生轨迹长度 N
 ROLLOUT_TEMP = 0.7                                 # 学生采样温度
 TOP_K = 16                                         # E2/E4/E5 分布 top-k
+EVAL_MAX_NEW = 1024                                # 评测生成最大新 token (答案被截断时调大)
 
 # ---------- 训练 (全参) ----------
 LR = 1e-5

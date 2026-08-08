@@ -45,7 +45,7 @@ def eval_vllm(run_name, items):
     llm = LLM(model=ckpt, dtype="bfloat16", trust_remote_code=True,
               max_model_len=C.MAX_LEN, gpu_memory_utilization=0.85,
               enforce_eager=True)
-    sp = SamplingParams(max_tokens=512, temperature=0.0)
+    sp = SamplingParams(max_tokens=C.EVAL_MAX_NEW, temperature=0.0)
     outs = llm.generate(prompts, sp, use_tqdm=False)
     del llm
     return [o.outputs[0].text for o in outs]
@@ -67,7 +67,7 @@ def eval_transformers(run_name, items):
         enc = tok(prompts[i:i + bs], return_tensors="pt", padding=True,
                   truncation=True, max_length=C.MAX_PROBLEM_LEN).to("cuda")
         with torch.no_grad():
-            gen = model.generate(**enc, max_new_tokens=512, do_sample=False,
+            gen = model.generate(**enc, max_new_tokens=C.EVAL_MAX_NEW, do_sample=False,
                                  pad_token_id=tok.pad_token_id)
         for b in range(len(prompts[i:i + bs])):
             ids = gen[b][enc.input_ids.shape[1]:]
