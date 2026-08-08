@@ -100,12 +100,13 @@ if ! "$PY" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null; then
   exit 1
 fi
 # 已装 torch 2.6.0 则跳过, 否则统一装 2.6.0 (PyPI 默认 CUDA 12.4 wheel, 4090 兼容)
+# transformers 锁 4.50.3: 与 vllm==0.8.5 兼容 (>=4.45,<4.51), 且含 all_special_tokens_extended
 if "$PY" -c "import torch; assert torch.__version__ == '2.6.0'" 2>/dev/null; then
   echo "  torch==2.6.0 已就绪, 跳过重装 (仅补装其余依赖)"
-  "$PY" -m pip install "transformers>=4.49" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
+  "$PY" -m pip install "transformers==4.50.3" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
 else
   echo "  安装 torch==2.6.0 + 其余依赖..."
-  "$PY" -m pip install torch==2.6.0 "transformers>=4.49" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
+  "$PY" -m pip install torch==2.6.0 "transformers==4.50.3" datasets accelerate peft "trl==0.15.1" sympy sentencepiece
 fi
 
 # ---------- [4/5] vLLM 评测加速 (锁定 0.8.5, 与训练同环境) ----------
