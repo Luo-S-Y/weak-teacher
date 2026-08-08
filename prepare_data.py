@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Step 0: 数据集准备
+"""Step 0: 数据集准备 + 模型预下载
 - 训练问题池: DeepScaleR 下载 POOL_SIZE=8000 题 (排除与 AIME24 重复的题, 防验证集穿越)
 - 评测: AIME24 (30 题, 内置兜底)
-输出: data/raw/pool.json + data/raw/aime24.json
+- 模型: 学生/教师/辅助教师预下载到本地缓存 (snapshot_download, 训练加载不再走网络)
+输出: data/raw/pool.json + data/raw/aime24.json + HF 模型缓存
 
-用法: python prepare_data.py
+用法: python prepare_data.py [--no-models]   (--no-models 跳过模型下载)
 """
 import os
 import sys
@@ -117,10 +118,24 @@ def prep_aime24():
     save("aime24.json", rows)
 
 
+# ---------- 模型预下载 (训练时 from_pretrained 直接命中本地缓存) ----------
+def prep_models():
+    from huggingface_hub import snapshot_download
+    import time
+    for mid in (C.STUDENT_MODEL, C.TEACHER_MAIN, C.TEACHER_EXTRA):
+        t0 = time.time()
+        log(f"预下载模型 {mid} ...")
+        snapshot_download(mid)
+        log(f"  {mid} 就绪 ({time.time()-t0:.0f}s)")
+
+
 def main():
+    flags = sys.argv[1:]
     prep_aime24()          # 先就绪 AIME24 (pool 去重需要)
     prep_pool()
-    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测")
+    if "--no-models" not in flags:
+        prep_models()
+    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测 + 模型缓存")
 
 
 if __name__ == "__main__":

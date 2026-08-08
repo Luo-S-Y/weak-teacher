@@ -26,7 +26,7 @@
 | E2 | 教师 top-k 分布熵（熵越低越可信） | 教师分布 |
 | E3 | 教师尖锐度（top1−top2） | 教师分布 |
 | E4 | 师生 top-k 重叠率（Rethinking OPD 指标） | 师生双方 |
-| E5 | 双教师 top-k 重叠率（需额外加载 1.5B 教师） | 教师池 |
+| E5 | 双教师 top-k 重叠率（辅助教师 0.5B） | 教师池 |
 | E6 | 0.7×E2 + 0.3×E1 组合 | 组合 |
 
 **机制 W0-W5**（作用在 KL 项）：
@@ -40,14 +40,6 @@
 | W4 | 分布插值：目标分布 = c·q + (1−c)·uniform |
 | W5 | 课程加权：阈值从 0.8 线性降到 0 |
 
-## 快速开始（AutoDL）
-
-```bash
-cd /root/autodl-tmp/opd
-bash setup.sh                    # 环境 + 依赖 (torch 2.6.0 / vllm 0.8.5)
-bash run_all.sh                  # prepare -> train(42组) -> eval -> report
-```
-
 ## 数据安排
 
 | 角色 | 数据 | 数量 |
@@ -55,14 +47,26 @@ bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 | 训练问题池 | DeepScaleR（**先排除 AIME24 30 题，防验证集穿越**） | 下载 8000，训练阶段实际用 **500**（`POOL_USE` 可配） |
 | 验证/测试 | AIME24 | 30 题（内置兜底） |
 
+## 快速开始（AutoDL）
+
+```bash
+cd /root/autodl-tmp/opd
+bash setup.sh                    # 环境 + 依赖 (torch 2.6.0 / vllm 0.8.5)
+python3 prepare_data.py          # 数据 + 预下载模型 (首次 ~5-15 分钟, 一次性)
+python3 train.py E0_W0           # 先验证单组
+bash run_all.sh                  # 全量: train(42组) -> eval -> report
+```
+
 ## 单步执行
 
 | 命令 | 说明 |
 |---|---|
-| `python prepare_data.py` | DeepScaleR 8000 题（去 AIME24 重复）+ AIME24 30 题 |
-| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步。单组 `python train.py E3_W1` |
+| `python prepare_data.py` | DeepScaleR 8000 题（去 AIME24 重复）+ AIME24 30 题 + **预下载学生/教师模型**（`--no-models` 跳过） |
+| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步（断点续跑）。单组 `python train.py E3_W1` |
 | `python eval.py --all` | AIME24 评测（vLLM，回退 transformers） |
 | `python report.py` | 报告 → `results/report.md`（基线 E0_W0，相对增益） |
+
+数据流: `prepare_data.py` → `data/raw/pool.json` + `aime24.json` → `train.py`（在线 rollout 蒸馏）→ `checkpoints/` → `eval.py` → `results/`。
 
 ## 配置（config.py）
 
@@ -71,11 +75,20 @@ bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 - `BATCH=16`（OOM 调小）/ `STEPS=200` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
 - `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
+## 训练日志（排查用）
+
+每 10 步打印一行 + rollout 真实输出，写入 `results/logs/{run}.jsonl`：
+
+```
+[E3_W1] step 100/200 ( 50.0%) | loss=0.8123 | KL=0.4512 | c=0.320(0.05~0.88) | len=78 | 1876 tok/s | 步时=2.3s | 已用=3.2m | 剩余≈3.2m
+    └ rollout: 学生真实生成文本 (每 10 步记录到日志, 截断 400 字符)
+```
+
 ## 关键实现说明
 
 1. **sampled-token reverse-KL**：loss 用学生采样轨迹上的 KL 估计 `L ≈ Σ c·[Σ_v p_t(v)(log p_t(v) − log q_t(v))]`（full-vocab，严格对应方案公式）
 2. **有效 token mask**：rollout 中 eos 之后的 padding 位置不参与 loss
-3. **E4/E5 复用前向**：E4 学生 top-k 来自训练前向，E5 双教师各一次前向
+3. **模型加载**：教师 + tokenizer 全程只加载一次（42 组共享），学生每组从预训练加载；`prepare_data.py` 已预下载全部模型
 4. **评测与训练分离**：训练侧零判题，评测侧标准基准报准确率
 
 ## 已知限制
@@ -83,4 +96,3 @@ bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 - 全 vocab KL 计算量大（每步 16×100×15 万 vocab），DeepScaleR 长题可能 OOM，调小 `BATCH`
 - 42 组全参 0.5B 权重约 42GB（`KEEP_MODEL=0` 可在 report 后删除）
 - E5 双教师额外占用 ~1GB 显存
-- 若需 `full-vocabulary OPD` 更省内存版本（top-k KL），可后续优化

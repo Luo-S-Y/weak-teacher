@@ -1,7 +1,4 @@
-#!/usr/bin/env python3
-"""弱教师可信度加权蒸馏实验 - 全局配置 (v2: 纯 logits 蒸馏, on-policy rollout)
-方案: weak-teacher-credibility-experiment_副本2.md
-"""
+"""弱教师可信度加权蒸馏实验 - 全局配置 (AutoDL 4090)"""
 import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -9,12 +6,15 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 # ---------- 路径 ----------
 DATA_DIR = os.path.join(BASE, "data")
-RAW_DIR = os.path.join(DATA_DIR, "raw")            # 问题池 / 评测数据
-CKPT_DIR = os.path.join(BASE, "checkpoints")       # LoRA adapter 输出
+RAW_DIR = os.path.join(DATA_DIR, "raw")            # GSM8K / MATH500 原始数据
+GEN_DIR = os.path.join(DATA_DIR, "generated")      # 教师生成结果 (jsonl)
+TOKEN_DIR = os.path.join(DATA_DIR, "tokenized")    # 共享 tokenize 缓存
+WEIGHT_DIR = os.path.join(DATA_DIR, "weights")     # 每组合的权重/索引
+CKPT_DIR = os.path.join(BASE, "checkpoints")       # 训练 checkpoint
 EVAL_DIR = os.path.join(BASE, "results")           # 评测结果与报告
 LOG_DIR = os.path.join(EVAL_DIR, "logs")           # 训练 loss 日志
 
-for d in (DATA_DIR, RAW_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
+for d in (DATA_DIR, RAW_DIR, GEN_DIR, TOKEN_DIR, WEIGHT_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
     # 防御: 失效软链或误建的普通文件会导致 os.makedirs(exist_ok=True) 报 FileExistsError
     if os.path.isdir(d):
         continue
@@ -23,41 +23,50 @@ for d in (DATA_DIR, RAW_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
     os.makedirs(d, exist_ok=True)
 
 # ---------- 模型 ----------
-STUDENT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"      # 学生 (全参微调)
-TEACHER_MAIN = "Qwen/Qwen2.5-1.5B-Instruct"       # 主教师 (提供逐 token logits)
-TEACHER_EXTRA = "Qwen/Qwen2.5-0.5B-Instruct"      # 辅助教师 (E5 双师一致性)
+STUDENT_MODEL = "Qwen/Qwen3-0.7B-Instruct"        # 学生 (主实验)
+TEACHER_MAIN = "Qwen/Qwen2.5-0.5B-Instruct"       # 主弱教师 (极端弱)
+TEACHER_EXTRA = "Qwen/Qwen2.5-1.5B-Instruct"      # 辅助教师 (E5 投票 / 强度对照)
 
-# ---------- 问题池 (rollout 输入) ----------
-POOL = "deepscaler"                                # 训练问题池: DeepScaleR
-POOL_SIZE = 8000                                   # 下载/抽样题数 (排除 AIME24 重复后)
-POOL_USE = 500                                     # 训练阶段实际使用的题数 (可配置, 默认 500)
+# ---------- 数据 ----------
+# 训练数据源: DeepScaleR (40.3k 竞赛级数学题 AMC/AIME/MATH), 作为弱教师蒸馏训练数据
+TRAIN_DATASETS = ("pe-nlp/DeepScaleR-40k-Prompt", "lime-nlp/DeepScaleR_Difficulty")
+TRAIN_NUM = 8000            # 训练样本抽样数 (全量 40.3k 生成/训练成本过高, 可按需调大)
 TRAIN_SEED = 42
-MATH500_DATASET = "Hothan/MATH500"                 # 备用评测 (镜像可能无缓存)
+# 评测数据集: 阶段 A 用 AIME24 (内置兜底)
+AIME24_DATASET = "Hothan/AIME-2024"
+AIME24_SPLIT = "test"
+MATH500_DATASET = "Hothan/MATH500"
 MATH500_SPLIT = "test"
+MAX_LEN = 2048                                    # 输入截断 (方案 max_len 2048)
+MAX_PROBLEM_LEN = 1024                            # 问题最大长度 (过滤超长)
 
-# ---------- 在线蒸馏 (on-policy rollout) ----------
-BATCH = 16                                         # 每步采样题数 (OOM 时调小)
-STEPS = 200                                        # 阶段 A: 42 组合 × 200 步
-MAX_LEN = 2048                                     # 序列截断 (问题 + 轨迹)
-MAX_PROBLEM_LEN = 1024                             # 问题最大长度
-ROLLOUT_MAX_NEW = 100                              # 学生轨迹长度 N
-ROLLOUT_TEMP = 0.7                                 # 学生采样温度
-TOP_K = 16                                         # E2/E4/E5 分布 top-k
-
-# ---------- 训练 (全参) ----------
-LR = 1e-5
-WARMUP_STEPS = 10
-MAX_GRAD_NORM = 1.0
+# ---------- 教师生成 ----------
+GEN_MAX_NEW = 1024                                # 教师生成最大新 token
+GEN_TEMP = 0.7
+GEN_TOP_P = 0.9
+SELF_CONSISTENCY_K = 8                            # E2 自一致性采样次数 (可调小加速)
+SELF_CONSISTENCY_TEMP = 0.8
+STUDENT_ANS_TEMP = 0.0                            # E4 学生基线生成温度 (greedy)
+EXTRA_TEACHER_TEMP = 0.0                          # E5 辅助教师投票生成温度
 
 # ---------- 估计器与机制 ----------
 ESTIMATORS = ["E0", "E1", "E2", "E3", "E4", "E5", "E6"]
 MECHANISMS = ["W0", "W1", "W2", "W3", "W4", "W5"]
 W2_TAU = 0.7                                      # W2 硬阈值
-W5_TAU_START = 0.8                                # W5 课程起始阈值 (线性降到 0)
-E6_MIX = {"E2": 0.7, "E1": 0.3}                   # E6 = 归一化组合
+W5_TAU = 0.8                                      # W5 课程高置信阈值
+E6_MIX = {"E3": 0.7, "E1": 0.3}                   # E6 混合估计器权重
 
-# 训练完是否保留权重 (42 组全参 0.5B 约 42GB, 默认保留; 磁盘不足可 KEEP_MODEL=0)
-KEEP_MODEL = os.environ.get("KEEP_MODEL", "1") == "1"
+# ---------- 训练 (TRL SFTConfig) ----------
+TRAIN_BATCH = 8
+GRAD_ACCUM = 1
+LR = 2e-5
+LR_SCHEDULE = "cosine"
+WARMUP_RATIO = 0.03
+EPOCHS = 1
+BF16 = True
+
+# 训练完是否保留完整 checkpoint (42 组全参约 120GB, 默认删除只留 loss/eval)
+KEEP_MODEL = os.environ.get("KEEP_MODEL", "0") == "1"
 
 
 def run_name(e, w):
