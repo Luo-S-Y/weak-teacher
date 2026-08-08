@@ -34,6 +34,7 @@ EXTRA_MODELS = ["Qwen/Qwen3-1.7B-Base"]           # 额外预下载模型 (实�
 POOL = "deepscaler"                                # 训练问题池: DeepScaleR
 POOL_SIZE = 8000                                   # 下载/抽样题数 (排除 AIME24 重复后)
 POOL_USE = 500                                     # 训练阶段实际使用的题数 (可配置, 默认 500)
+SFT_NUM = 1000                                     # Qwen3 SFT sanity check 抽样题数
 TRAIN_SEED = 42
 MATH500_DATASET = "Hothan/MATH500"                 # 备用评测 (镜像可能无缓存)
 MATH500_SPLIT = "test"

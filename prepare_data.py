@@ -142,13 +142,13 @@ def prep_sft():
     random.seed(C.TRAIN_SEED)
     cand = [r for r in rows if r.get("problem") and (r.get("solution") or r.get("answer"))]
     random.shuffle(cand)
-    cand = cand[:1000]
+    cand = cand[:C.SFT_NUM]
     with open(out, "w") as f:
         for r in cand:
             sol = r.get("solution") or r.get("answer")
             f.write(json.dumps({"problem": r["problem"], "solution": sol},
                                ensure_ascii=False) + "\n")
-    log(f"sft1000: {len(cand)} 条 -> {out}")
+    log(f"sft: {len(cand)} 条 -> {out}")
 
 
 # ---------- 模型预下载 (训练时 from_pretrained 直接命中本地缓存) ----------
@@ -171,7 +171,7 @@ def main():
         prep_sft()
     if "--no-models" not in flags:
         prep_models()
-    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测 + sft1000 + 模型缓存")
+    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测 + sft{C.SFT_NUM} + 模型缓存")
 
 
 if __name__ == "__main__":
