@@ -88,11 +88,12 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 
 1. **sampled-token reverse-KL**：loss 用学生采样轨迹上的 KL 估计 `L ≈ Σ c·[Σ_v p_t(v)(log p_t(v) − log q_t(v))]`（full-vocab，严格对应方案公式）
 2. **有效 token mask**：rollout 中 eos 之后的 padding 位置不参与 loss
-3. **模型加载**：教师 + tokenizer 全程只加载一次（42 组共享），学生每组从预训练加载；`prepare_data.py` 已预下载全部模型
-4. **评测与训练分离**：训练侧零判题，评测侧标准基准报准确率
+3. **显存优化（4090 24GB）**：`_logits_slice()` 直连 base model 输出 hidden，只对 rollout 窗口过 lm_head，避免顶层 forward 物化全序列 `(B, seq, 151k)` logits（batch16×1100token ≈ 5.5GB/模型），学生+教师两处共省 ~11GB；另设 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 减少碎片
+4. **模型加载**：教师 + tokenizer 全程只加载一次（42 组共享），学生每组从预训练加载；`prepare_data.py` 已预下载全部模型
+5. **评测与训练分离**：训练侧零判题，评测侧标准基准报准确率
 
 ## 已知限制
 
-- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），DeepScaleR 长题可能 OOM，调小 `BATCH`
+- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），DeepScaleR 长题仍可能 OOM，调小 `BATCH`（16→8/4）或 `MAX_PROBLEM_LEN`
 - 42 组全参 0.5B 权重约 42GB（`KEEP_MODEL=0` 可在 report 后删除）
 - E5 双教师额外占用 ~1GB 显存

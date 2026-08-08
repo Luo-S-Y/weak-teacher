@@ -99,9 +99,29 @@ def make_prompt(problem):
             f"<|im_start|>user\n{problem}<|im_end|>\n<|im_start|>assistant\n")
 
 
-@torch.no_grad()
-def teacher_logits(teacher, seq, attn):
-    return teacher(input_ids=seq, attention_mask=attn).logits
+def _logits_slice(model, seq, attn, s0, s1):
+    """只计算 [s0:s1) 位置的 logits (Qwen2.5)。
+
+    顶层 model(...) 会在内部对全序列过 lm_head, 物化 (B, seq, V≈151k) logits
+    (batch16×1100token ≈ 5.5GB), 是 4090 上 OOM 的主因。改为直连 base model
+    输出 hidden (final norm 已在 base model 内部完成), 仅对需要的窗口过 lm_head,
+    与顶层 forward 的 logits 完全等价。
+    """
+    base = model.model(input_ids=seq, attention_mask=attn, use_cache=False).last_hidden_state
+    return model.lm_head(base[:, s0:s1])
+
+
+def _verify_logits_slice(model, tok):
+    """一次性校验 _logits_slice 与顶层 forward 等价 (防止 transformers 版本差异导致 final norm 位置不同)"""
+    ids = torch.tensor([[1, 2, 3, 4]], device="cuda")
+    attn = torch.ones_like(ids)
+    with torch.no_grad():
+        ref = model(input_ids=ids, attention_mask=attn).logits[:, 0:3]
+        mine = _logits_slice(model, ids, attn, 0, 3)
+    err = (ref - mine).abs().max().item()
+    if err > 1e-3:
+        raise RuntimeError(f"_logits_slice 与顶层 forward 不一致 (max diff {err:.2e}), 请检查 final norm 位置或升级 transformers")
+    log(f"  _logits_slice 校验通过 (与顶层 forward max diff {err:.1e})")
 
 
 def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
@@ -131,18 +151,18 @@ def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
         return None
 
     attn = (seq != tok.pad_token_id).long()
-    # ③ 学生训练前向 (带梯度) + 教师前向 (no_grad), 取生成 token 的预测分布
-    st_logits = student(input_ids=seq, attention_mask=attn).logits
-    pred_s = st_logits[:, prompt_len - 1: prompt_len - 1 + gen_len]   # (B,gen,V) grad
+    # ③ 学生训练前向 (带梯度) + 教师前向 (no_grad), 只对生成 token 窗口过 lm_head
+    S0, S1 = prompt_len - 1, prompt_len - 1 + gen_len
+    pred_s = _logits_slice(student, seq, attn, S0, S1)     # (B,gen,V) grad
     log_p_t_ = F.log_softmax(pred_s, dim=-1)
     p_t = log_p_t_.exp()
 
     with torch.no_grad():
-        pred_t = teacher_logits(teacher, seq, attn)[:, prompt_len - 1: prompt_len - 1 + gen_len]
+        pred_t = _logits_slice(teacher, seq, attn, S0, S1)
         log_q_t = F.log_softmax(pred_t, dim=-1)
         q_t = log_q_t.exp()
         if e == "E5":
-            pred_e = teacher_logits(teacher_extra, seq, attn)[:, prompt_len - 1: prompt_len - 1 + gen_len]
+            pred_e = _logits_slice(teacher_extra, seq, attn, S0, S1)
             q_e = F.log_softmax(pred_e, dim=-1).exp()
             qt = torch.topk(q_t, C.TOP_K, dim=-1)
             qe = torch.topk(q_e, C.TOP_K, dim=-1)
@@ -223,6 +243,7 @@ def train_one(run_name, teacher, teacher_extra, tok):
     pool = json.load(open(POOL_PATH))[:C.POOL_USE]   # 训练阶段仅用 POOL_USE 条
     log(f"训练 {run_name} (E={e}, W={w}), 问题池 {len(pool)} 题 (共 {C.POOL_SIZE}, 用 {C.POOL_USE})")
     student = load_student()
+    _verify_logits_slice(student, tok)
     if e == "E5" and teacher_extra is None:
         teacher_extra = load_teacher_extra()
 
@@ -244,7 +265,7 @@ def train_one(run_name, teacher, teacher_extra, tok):
             r = train_step(student, teacher, teacher_extra, tok, problems, step, e, w)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
-            log(f"  step {step} OOM, 建议调小 BATCH"); raise
+            log(f"  step {step} OOM: 调小 config.BATCH (16→8/4) 或 MAX_PROBLEM_LEN"); raise
         if r is None:   # rollout 无有效轨迹 (全 eos/空)
             none_count += 1
             if none_count in (1, 10, 50) or none_count % 100 == 0:

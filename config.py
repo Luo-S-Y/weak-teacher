@@ -6,6 +6,8 @@ import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+# CUDA 显存: 减少碎片化 (24GB 卡跑 42 组连续训练, 尤其全参 + 大 vocab logits)
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 # ---------- 路径 ----------
 DATA_DIR = os.path.join(BASE, "data")
