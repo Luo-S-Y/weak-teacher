@@ -28,7 +28,7 @@ for d in (DATA_DIR, RAW_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
 STUDENT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"      # 学生 (全参微调)
 TEACHER_MAIN = "Qwen/Qwen2.5-1.5B-Instruct"       # 主教师 (提供逐 token logits)
 TEACHER_EXTRA = "Qwen/Qwen2.5-0.5B-Instruct"      # 辅助教师 (E5 双师一致性)
-EXTRA_MODELS = ["Qwen/Qwen3-1.5B"]                # 额外预下载模型 (实验扩展用, prepare_data 一起拉取)
+EXTRA_MODELS = ["Qwen/Qwen3-1.7B-Base"]           # 额外预下载模型 (实验扩展用, prepare_data 一起拉取)
 
 # ---------- 问题池 (rollout 输入) ----------
 POOL = "deepscaler"                                # 训练问题池: DeepScaleR
