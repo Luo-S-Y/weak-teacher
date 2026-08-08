@@ -153,7 +153,14 @@ def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
                              log_q_t.shape[-1])
 
     loss = weighted_loss(w, c_t, p_t, log_p_t_, log_q_t, step, valid)
-    return loss, float(loss.item()), float(c_t.detach().mean())
+    # 日志指标 (no_grad, 不额外占梯度)
+    with torch.no_grad():
+        kl_raw = (p_t.detach() * (log_p_t_.detach() - log_q_t)).sum(-1)
+        kl_mean = float((kl_raw * valid).sum() / valid.sum())
+        gen_len = int(valid.sum().item() // B)
+    return {"loss": loss, "loss_val": float(loss.item()), "conf": float(c_t.detach().mean()),
+            "conf_min": float(c_t.detach().min()), "conf_max": float(c_t.detach().max()),
+            "kl": kl_mean, "gen_len": gen_len, "valid_tokens": int(valid.sum().item())}
 
 
 # ==================== 训练入口 ====================
@@ -194,9 +201,15 @@ def train_one(run_name):
     opt = torch.optim.AdamW([p for p in student.parameters() if p.requires_grad], lr=C.LR)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / C.WARMUP_STEPS))
     log_path = os.path.join(C.LOG_DIR, f"{run_name}.jsonl")
-    lf = open(log_path, "w")
+    lf = open(log_path, "w", buffering=1)          # 行缓冲, 崩溃时日志不丢
+
+    import time as _t
+    t_start = _t.time()
+    cum_tokens, cum_steps, none_count = 0, 0, 0
+    log(f"[{run_name}] 开始训练: {C.STEPS} 步 × batch {C.BATCH}, 每 10 步打印进度")
 
     for step in range(C.STEPS):
+        t0 = _t.time()
         problems = [random.choice(pool)["problem"] for _ in range(C.BATCH)]
         opt.zero_grad()
         try:
@@ -204,17 +217,35 @@ def train_one(run_name):
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             log(f"  step {step} OOM, 建议调小 BATCH"); raise
-        if r is None:
+        if r is None:   # rollout 无有效轨迹 (全 eos/空)
+            none_count += 1
+            if none_count in (1, 10, 50) or none_count % 100 == 0:
+                log(f"  WARNING: 累计 {none_count} 步无有效轨迹 (检查 rollout/生成为空)")
             continue
-        loss, lv, cv = r
-        loss.backward()
+        none_count = 0
+        r["loss"].backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), C.MAX_GRAD_NORM)
         opt.step()
         sched.step()
-        lf.write(json.dumps({"step": step, "loss": round(lv, 4), "conf": round(cv, 4)}) + "\n")
-        if step % 20 == 0:
-            log(f"  [{run_name}] step {step}/{C.STEPS} loss={lv:.4f} c={cv:.4f}")
+
+        dt = _t.time() - t0
+        cum_tokens += r["valid_tokens"]
+        cum_steps += 1
+        tok_s = cum_tokens / (_t.time() - t_start)
+        elapsed = _t.time() - t_start
+        eta = elapsed / cum_steps * (C.STEPS - cum_steps) if cum_steps else 0
+        lf.write(json.dumps({"step": step, "loss": round(r["loss_val"], 4),
+                             "conf": round(r["conf"], 4), "kl": round(r["kl"], 4),
+                             "gen_len": r["gen_len"], "tok_s": round(tok_s, 1)}) + "\n")
+        if step == 0 or (step + 1) % 10 == 0 or step == C.STEPS - 1:
+            pct = (step + 1) / C.STEPS * 100
+            log(f"[{run_name}] step {step + 1}/{C.STEPS} ({pct:5.1f}%) | "
+                f"loss={r['loss_val']:.4f} | KL={r['kl']:.4f} | "
+                f"c={r['conf']:.3f}({r['conf_min']:.2f}~{r['conf_max']:.2f}) | "
+                f"len={r['gen_len']} | {tok_s:.0f} tok/s | "
+                f"步时={dt:.1f}s | 已用={elapsed/60:.1f}m | 剩余≈{eta/60:.1f}m")
     lf.close()
+    log(f"[{run_name}] 训练完成, 总耗时 {(_t.time()-t_start)/60:.1f}m, 平均 {cum_tokens/(_t.time()-t_start):.0f} tok/s")
 
     os.makedirs(ckpt_dir, exist_ok=True)
     student.save_pretrained(ckpt_dir)
