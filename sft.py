@@ -27,6 +27,7 @@ LR = 2e-4
 BATCH = 2
 GRAD_ACCUM = 2          # 梯度累积 2 步, 等价 batch 4 的梯度质量
 EPOCHS = 1              # 1 epoch: 数据有噪音, 多轮会过拟合坏样本 (复读/时间戳残渣)
+MAX_STEPS = 250         # micro 步上限 (1 epoch=500 步; 250 步=覆盖 500 条, 0=不限制)
 MAX_LEN = 1024
 SEED = 42
 LORA_R = 16
@@ -135,10 +136,15 @@ def main():
                 sps = ep_tokens / (time.time() - t_start)
                 log(f"  epoch {ep+1}/{EPOCHS} step {global_step} "
                     f"loss={loss.item():.4f} | {sps:.0f} tok/s")
+            if MAX_STEPS and global_step >= MAX_STEPS:
+                break
         if accum_steps % GRAD_ACCUM != 0:        # epoch 末尾补一次更新
             opt.step()
             opt.zero_grad()
         log(f"epoch {ep+1}/{EPOCHS} 完成, mean loss={ep_loss/n_steps:.4f}")
+        if MAX_STEPS and global_step >= MAX_STEPS:
+            log(f"达到 MAX_STEPS={MAX_STEPS}, 提前结束训练")
+            break
 
     # 合并 LoRA 并保存完整权重, 评测直接加载
     merged = model.merge_and_unload()
