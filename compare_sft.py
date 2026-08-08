@@ -72,6 +72,7 @@ def main():
         print(f"\n{'='*80}\n#{i} 题目: {r['problem']}\n")
         print(f"--- Base ({'OK' if cb else 'XX'}, pred={pred_b!r}, gold~{gold!r}) ---\n{show(out_b)}")
         print(f"\n--- SFT  ({'OK' if cs else 'XX'}, pred={pred_s!r}, gold~{gold!r}) ---\n{show(out_s)}")
+        print(f"\n--- 标准解答 (原始 solution) ---\n{show(r['solution'])}")
     log(f"答案匹配: Base {nb}/{len(sample)} | SFT {ns}/{len(sample)}")
 
 
