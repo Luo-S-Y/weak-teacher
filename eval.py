@@ -42,7 +42,9 @@ def eval_vllm(run_name, items):
     from vllm import LLM, SamplingParams
     prompts = build_prompts(items)
     ckpt = os.path.join(C.CKPT_DIR, run_name)
-    llm = LLM(model=ckpt, dtype="bfloat16", trust_remote_code=True,
+    # tokenizer 显式用原始模型: checkpoint 里的 tokenizer 可能是 5.x 格式, 4.50.3/vLLM 读不了
+    llm = LLM(model=ckpt, tokenizer=C.STUDENT_MODEL, dtype="bfloat16",
+              trust_remote_code=True,
               max_model_len=C.MAX_LEN, gpu_memory_utilization=0.85,
               enforce_eager=True)
     sp = SamplingParams(max_tokens=C.EVAL_MAX_NEW, temperature=0.0)
@@ -57,7 +59,8 @@ def eval_transformers(run_name, items):
     ckpt = os.path.join(C.CKPT_DIR, run_name)
     model = AutoModelForCausalLM.from_pretrained(
         ckpt, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
-    tok = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
+    # 同 vLLM: tokenizer 从原始模型加载, 避免 checkpoint 内 5.x 格式不兼容
+    tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     tok.padding_side = "left"          # decoder-only 生成必须左填充
