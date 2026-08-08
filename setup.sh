@@ -90,6 +90,13 @@ echo "  使用: $PY"
 grep -q "HF_ENDPOINT" ~/.bashrc 2>/dev/null || echo 'export HF_ENDPOINT=https://hf-mirror.com' >> ~/.bashrc
 export HF_ENDPOINT=https://hf-mirror.com
 echo "  HF_ENDPOINT=https://hf-mirror.com"
+# 模型缓存放数据盘 (AutoDL: /root/autodl-tmp 容量大, 避免占系统盘)
+if [ -d /root/autodl-tmp ]; then
+  grep -q "HF_HOME" ~/.bashrc 2>/dev/null || echo 'export HF_HOME=/root/autodl-tmp/hf' >> ~/.bashrc
+  export HF_HOME=/root/autodl-tmp/hf
+  mkdir -p "$HF_HOME"
+  echo "  HF_HOME=$HF_HOME (模型缓存放数据盘)"
+fi
 
 # ---------- [3/5] 依赖安装 ----------
 echo ""
