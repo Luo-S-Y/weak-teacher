@@ -69,7 +69,8 @@ def main():
         cb, cs = answers_match(pred_b, gold), answers_match(pred_s, gold)
         nb += cb
         ns += cs
-        print(f"\n{'='*80}\n#{i} 题目: {r['problem']}\n")
+        print(f"\n{'='*80}\n#{i} 题目: {r['problem']}")
+        print(f"原始答案: {r.get('answer') or '(solution 提取) ' + repr(gold)}\n")
         print(f"--- Base ({'OK' if cb else 'XX'}, pred={pred_b!r}, gold~{gold!r}) ---\n{show(out_b)}")
         print(f"\n--- SFT  ({'OK' if cs else 'XX'}, pred={pred_s!r}, gold~{gold!r}) ---\n{show(out_s)}")
         print(f"\n--- 标准解答 (原始 solution) ---\n{show(r['solution'])}")

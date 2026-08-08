@@ -152,7 +152,8 @@ def prep_sft():
     with open(out, "w") as f:
         for r in cand:
             sol = r.get("solution") or r.get("answer")
-            f.write(json.dumps({"problem": r["problem"], "solution": sol},
+            f.write(json.dumps({"problem": r["problem"], "solution": sol,
+                                "answer": r.get("answer", "")},
                                ensure_ascii=False) + "\n")
     log(f"sft: {len(cand)} 条 -> {out}")
 
