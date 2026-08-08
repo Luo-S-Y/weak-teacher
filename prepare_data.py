@@ -118,31 +118,37 @@ def prep_aime24():
     save("aime24.json", rows)
 
 
-# ---------- SFT 数据 (Qwen3-1.7B-Base sanity check: 1000 题带 R1 解答) ----------
+# ---------- SFT 数据 (Qwen3-1.7B-Base sanity check: SFT_NUM 题带解答) ----------
 def prep_sft():
     out = os.path.join(C.RAW_DIR, "sft1000.jsonl")
     if os.path.exists(out):
         log("sft1000.jsonl 已存在, 跳过"); return
+    import itertools
     from datasets import load_dataset
     rows = None
     for ds_id in ("open-r1/OpenR1-Math-220k", "Hothan/MATH",
                   "pe-nlp/DeepScaleR-40k-Dedup", "lime-nlp/DeepScaleR_Dedup_40k"):
         try:
-            log(f"下载 SFT 数据源 ({ds_id})")
-            ds = load_dataset(ds_id, trust_remote_code=True)
+            log(f"下载 SFT 数据源 ({ds_id}, 流式只取前 {C.SFT_NUM*3} 条)")
+            ds = load_dataset(ds_id, trust_remote_code=True, streaming=True)
             split = "train" if "train" in ds else list(ds.keys())[0]
-            rows = ds[split]
-            log(f"  成功: {ds_id} (split={split}) 共 {len(rows)} 条")
-            break
+            cand = []
+            for r in itertools.islice(iter(ds[split]), C.SFT_NUM * 3):
+                if r.get("problem") and (r.get("solution") or r.get("answer")):
+                    cand.append(r)
+            if len(cand) >= C.SFT_NUM:
+                rows = cand
+                log(f"  成功: {ds_id} 流式取 {len(cand)} 条候选")
+                break
+            log(f"  {ds_id} 候选不足 ({len(cand)})")
         except Exception as e:
             log(f"  {ds_id} 失败: {str(e)[:100]}")
     if not rows:
-        log("ERROR: DeepScaleR 带解答版下载失败 (需要含 solution 的数据做 SFT)")
+        log("ERROR: SFT 数据源全部失败 (需要含 solution 的数据做 SFT)")
         return
     random.seed(C.TRAIN_SEED)
-    cand = [r for r in rows if r.get("problem") and (r.get("solution") or r.get("answer"))]
-    random.shuffle(cand)
-    cand = cand[:C.SFT_NUM]
+    random.shuffle(rows)
+    cand = rows[:C.SFT_NUM]
     with open(out, "w") as f:
         for r in cand:
             sol = r.get("solution") or r.get("answer")
