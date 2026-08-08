@@ -6,7 +6,7 @@
 ## 训练循环（train.py）
 
 ```
-① 采样 16 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(1.5B) 对前缀给 q_t
+① 采样 4 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(1.5B) 对前缀给 q_t
 ──> ④ 估计可信度 c (E0-E6, 全基于 logits) ──> ⑤ L = Σ c·KL(πθ‖πT) 更新学生 (0.5B 全参)
 ```
 
@@ -62,7 +62,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 | 命令 | 说明 |
 |---|---|
 | `python prepare_data.py` | DeepScaleR 8000 题（去 AIME24 重复）+ AIME24 30 题 + **预下载学生/教师模型**（`--no-models` 跳过） |
-| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步（断点续跑）。单组 `python train.py E3_W1` |
+| `python train.py --all` | 42 组 on-policy 蒸馏，每组 100 步（断点续跑）。单组 `python train.py E3_W1` |
 | `python eval.py --all` | AIME24 评测（vLLM，回退 transformers） |
 | `python report.py` | 报告 → `results/report.md`（基线 E0_W0，相对增益） |
 
@@ -72,7 +72,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 
 - `STUDENT_MODEL`（Qwen2.5-0.5B-Instruct，**全参**）/ `TEACHER_MAIN`（1.5B）/ `TEACHER_EXTRA`（0.5B，仅 E5）
 - `POOL_SIZE=8000`（DeepScaleR 下载量）/ **`POOL_USE=500`（训练实际使用题数）**
-- `BATCH=16`（OOM 调小）/ `STEPS=200` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
+- `BATCH=4`（OOM 调小）/ `STEPS=100` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
 - `MAX_PROBLEM_LEN=512`（训练问题长度上限，改小显著省显存）/ `MAX_LEN=2048`（评测用）
 - `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
@@ -81,7 +81,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 每 10 步打印一行 + rollout 真实输出，写入 `results/logs/{run}.jsonl`：
 
 ```
-[E3_W1] step 100/200 ( 50.0%) | loss=0.8123 | KL=0.4512 | c=0.320(0.05~0.88) | len=78 | 1876 tok/s | 步时=2.3s | 已用=3.2m | 剩余≈3.2m
+[E3_W1] step 50/100 ( 50.0%) | loss=0.8123 | KL=0.4512 | c=0.320(0.05~0.88) | len=78 | 1876 tok/s | 步时=2.3s | 已用=3.2m | 剩余≈3.2m
     └ rollout: 学生真实生成文本 (每 10 步记录到日志, 截断 400 字符)
 ```
 
@@ -89,12 +89,12 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 
 1. **sampled-token reverse-KL**：loss 用学生采样轨迹上的 KL 估计 `L ≈ Σ c·[Σ_v p_t(v)(log p_t(v) − log q_t(v))]`（full-vocab，严格对应方案公式）
 2. **有效 token mask**：rollout 中 eos 之后的 padding 位置不参与 loss
-3. **显存优化（4090 24GB）**：`_logits_slice()` 直连 base model 输出 hidden，只对 rollout 窗口过 lm_head，避免顶层 forward 物化全序列 `(B, seq, 151k)` logits（batch16×1100token ≈ 5.5GB/模型），学生+教师两处共省 ~11GB；另设 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 减少碎片
+3. **显存优化（4090 24GB）**：`_logits_slice()` 直连 base model 输出 hidden，只对 rollout 窗口过 lm_head，避免顶层 forward 物化全序列 `(B, seq, 151k)` logits（满批长序列时数 GB/模型），学生+教师两处大幅省显存；另设 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 减少碎片
 4. **模型加载**：教师 + tokenizer 全程只加载一次（42 组共享），学生每组从预训练加载；`prepare_data.py` 已预下载全部模型
 5. **评测与训练分离**：训练侧零判题，评测侧标准基准报准确率
 
 ## 已知限制
 
-- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），DeepScaleR 长题仍可能 OOM，调小 `BATCH`（16→8/4）或 `MAX_PROBLEM_LEN`
+- 全 vocab KL 计算量大（每步 4×100×15 万 vocab），DeepScaleR 长题仍可能 OOM，调小 `BATCH` 或 `MAX_PROBLEM_LEN`
 - 42 组全参 0.5B 权重约 42GB（`KEEP_MODEL=0` 可在 report 后删除）
 - E5 双教师额外占用 ~1GB 显存
