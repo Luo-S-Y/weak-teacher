@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Qwen3-1.7B-Base SFT (1000 题, LoRA) — 能力 sanity check
+"""Qwen3-1.7B-Base SFT (1000 题, 全参) — 能力 sanity check
 
 目的: 先让 Qwen3-1.7B-Base 学会"解题 + \\boxed 答案"格式, 再评估 AIME24,
 判断 1.7B 级别的强基座能否撑起当前评测 (决定评测集/教师选择)。
+全参微调 (非 LoRA), 显存优化: 8bit AdamW + gradient checkpointing。
 
-用法: python sft.py            # 训练 -> checkpoints/qwen3-1.7b-sft (合并后的完整权重)
-依赖: transformers>=4.51 (Qwen3 支持) + peft
-数据: data/raw/sft1000.jsonl (prepare_data.py 生成, DeepScaleR 带 R1 解答 1000 题)
+用法: python sft.py            # 训练 -> checkpoints/qwen3-1.7b-sft (完整权重)
+依赖: transformers>=4.51 (Qwen3 支持); bitsandbytes 可选 (8bit AdamW 省显存)
+数据: data/raw/sft1000.jsonl (prepare_data.py 生成)
 """
 import os
 import sys
@@ -23,15 +24,13 @@ MODEL = "Qwen/Qwen3-1.7B-Base"
 SFT_PATH = os.path.join(C.RAW_DIR, "sft1000.jsonl")
 OUT_DIR = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
 
-LR = 2e-4
+LR = 1e-5               # 全参 SFT 常用 lr (LoRA 才用 2e-4 级)
 BATCH = 2
 GRAD_ACCUM = 2          # 梯度累积 2 步, 等价 batch 4 的梯度质量
 EPOCHS = 1              # 1 epoch: 数据有噪音, 多轮会过拟合坏样本 (复读/时间戳残渣)
 MAX_STEPS = 250         # micro 步上限 (1 epoch=500 步; 250 步=覆盖 500 条, 0=不限制)
 MAX_LEN = 1024
 SEED = 42
-LORA_R = 16
-LORA_ALPHA = 32
 
 
 def check_env():
@@ -81,7 +80,6 @@ def main():
     check_env()
     random_state = torch.Generator().manual_seed(SEED)
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from peft import LoraConfig, get_peft_model
 
     tok = AutoTokenizer.from_pretrained(MODEL)
     if tok.pad_token is None:
@@ -93,16 +91,19 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to("cuda")
     model.gradient_checkpointing_enable(
         gradient_checkpointing_kwargs={"use_reentrant": False})   # 省激活显存, 显式 use_reentrant=False
-    model.enable_input_require_grads()             # gradient checkpointing + LoRA 冻结权重配套
-    lora = LoraConfig(r=LORA_R, lora_alpha=LORA_ALPHA, bias="none",
-                      target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                                      "gate_proj", "up_proj", "down_proj"],
-                      task_type="CAUSAL_LM")
-    model = get_peft_model(model, lora)
-    model.print_trainable_parameters()
-    log(f"模型加载完成 ({time.time()-t0:.0f}s)")
+    model.train()   # 全参: 所有参数参与训练
+    n_train = sum(p.numel() for p in model.parameters())
+    log(f"模型加载完成 ({time.time()-t0:.0f}s), 全参训练 {n_train/1e9:.2f}B 参数")
 
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=LR)
+    # optimizer: 优先 8bit AdamW 省显存 (全参 1.7B: fp32 Adam 状态约 14GB, 8bit 约 1.7GB)
+    try:
+        import bitsandbytes as bnb
+        opt = bnb.optim.AdamW8bit([p for p in model.parameters()], lr=LR)
+        log("optimizer: bitsandbytes AdamW8bit")
+    except ImportError:
+        opt = torch.optim.AdamW([p for p in model.parameters()], lr=LR)
+        log("WARNING: bitsandbytes 未安装, 用 torch AdamW (fp32 状态, 显存紧张时改 BATCH=1)")
+
     total = len(data)
     n_steps = (total + BATCH - 1) // BATCH
     global_step = 0
@@ -146,10 +147,9 @@ def main():
             log(f"达到 MAX_STEPS={MAX_STEPS}, 提前结束训练")
             break
 
-    # 合并 LoRA 并保存完整权重, 评测直接加载
-    merged = model.merge_and_unload()
+    # 全参模型直接保存完整权重, 评测直接加载
     os.makedirs(OUT_DIR, exist_ok=True)
-    merged.save_pretrained(OUT_DIR)
+    model.save_pretrained(OUT_DIR)
     tok.save_pretrained(OUT_DIR)
     log(f"SFT 完成 ({(time.time()-t_start)/60:.1f}m) -> {OUT_DIR}")
 
