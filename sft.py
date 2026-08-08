@@ -24,7 +24,7 @@ SFT_PATH = os.path.join(C.RAW_DIR, "sft1000.jsonl")
 OUT_DIR = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
 
 LR = 2e-4
-BATCH = 8
+BATCH = 4
 EPOCHS = 3
 MAX_LEN = 2048
 SEED = 42
@@ -85,6 +85,8 @@ def main():
 
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to("cuda")
+    model.gradient_checkpointing_enable()          # 省激活显存 (batch4+2048 序列下必须)
+    model.enable_input_require_grads()             # gradient checkpointing + LoRA 冻结权重配套
     lora = LoraConfig(r=LORA_R, lora_alpha=LORA_ALPHA, bias="none",
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                                       "gate_proj", "up_proj", "down_proj"],
