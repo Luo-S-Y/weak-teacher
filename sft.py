@@ -49,13 +49,17 @@ def make_prompt(problem):
 
 def build(tok):
     rows = [json.loads(l) for l in open(SFT_PATH)]
-    data = []
+    data, skipped = [], 0
     for r in rows:
         p_ids = tok(make_prompt(r["problem"]))["input_ids"]
-        full = p_ids + tok(r["solution"])["input_ids"]
-        full = full[:MAX_LEN]
+        if len(p_ids) >= MAX_LEN:          # prompt 超长则跳过, 防止截断后 labels 错位
+            skipped += 1
+            continue
+        full = (p_ids + tok(r["solution"])["input_ids"])[:MAX_LEN]
         labels = [-100] * len(p_ids) + full[len(p_ids):]
         data.append((full, labels))
+    if skipped:
+        log(f"  跳过 prompt 超长样本 {skipped} 条")
     return data
 
 
