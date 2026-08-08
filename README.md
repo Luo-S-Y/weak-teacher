@@ -1,15 +1,16 @@
 # 弱教师信号的可信度加权蒸馏 — 阶段 A 复现代码（v2 纯 logits 蒸馏）
 
 > 方案: `weak-teacher-credibility-experiment_副本2.md` | 目标环境: **AutoDL 4090 (24GB, CUDA>=12.1)**
-> v2 核心: 训练侧**无判题**，学生 **on-policy rollout** 产生轨迹，弱教师对轨迹前缀给**逐 token logits**，按可信度加权做 **reverse-KL** 蒸馏（ESR 同款循环 + 加权层）。
+> v2 核心: 训练侧**无判题**，学生 **on-policy rollout** 产生轨迹，教师对轨迹前缀给**逐 token logits**，按可信度加权做 **reverse-KL** 蒸馏（ESR 同款循环 + 加权层）。
 
 ## 训练循环（train.py）
 
 ```
-① 采样 16 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(0.5B) 对前缀给 q_t
-──> ④ 估计可信度 c (E0-E6, 全基于 logits) ──> ⑤ L = Σ c·KL(πθ‖πT) 更新学生 (LoRA r32 α64)
+① 采样 16 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(1.5B) 对前缀给 q_t
+──> ④ 估计可信度 c (E0-E6, 全基于 logits) ──> ⑤ L = Σ c·KL(πθ‖πT) 更新学生 (0.5B 全参)
 ```
 
+- 学生 **Qwen2.5-0.5B-Instruct 全参微调**（无 LoRA）；教师 **Qwen2.5-1.5B-Instruct** 提供 logits
 - 每步轨迹来自**当前学生**（on-policy），数据不复用
 - 学生前向算 `p_t`（带梯度），教师前向算 `q_t`（no_grad），二者取生成 token 位置
 - `Loss = Σ c·KL(p_t‖q_t)`：full-vocab reverse-KL，采样轨迹上的 MC 形式
@@ -47,18 +48,26 @@ bash setup.sh                    # 环境 + 依赖 (torch 2.6.0 / vllm 0.8.5)
 bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 ```
 
+## 数据安排
+
+| 角色 | 数据 | 数量 |
+|---|---|---|
+| 训练问题池 | DeepScaleR（**先排除 AIME24 30 题，防验证集穿越**） | 下载 8000，训练阶段实际用 **500**（`POOL_USE` 可配） |
+| 验证/测试 | AIME24 | 30 题（内置兜底） |
+
 ## 单步执行
 
 | 命令 | 说明 |
 |---|---|
-| `python prepare_data.py` | 问题池 GSM8K train 7473 题（`--deepscaler` 换 DeepScaleR 8000 题）+ AIME24 评测（内置兜底） |
-| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步（`STEPS`）。单组 `python train.py E3_W1` |
-| `python eval.py --all` | AIME24 评测（vLLM+LoRA，回退 transformers） |
+| `python prepare_data.py` | DeepScaleR 8000 题（去 AIME24 重复）+ AIME24 30 题 |
+| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步。单组 `python train.py E3_W1` |
+| `python eval.py --all` | AIME24 评测（vLLM，回退 transformers） |
 | `python report.py` | 报告 → `results/report.md`（基线 E0_W0，相对增益） |
 
 ## 配置（config.py）
 
-- `STUDENT_MODEL`（默认 Qwen2.5-1.5B-Instruct + LoRA）/ `TEACHER_MAIN`（0.5B）/ `TEACHER_EXTRA`（1.5B，仅 E5）
+- `STUDENT_MODEL`（Qwen2.5-0.5B-Instruct，**全参**）/ `TEACHER_MAIN`（1.5B）/ `TEACHER_EXTRA`（0.5B，仅 E5）
+- `POOL_SIZE=8000`（DeepScaleR 下载量）/ **`POOL_USE=500`（训练实际使用题数）**
 - `BATCH=16`（OOM 调小）/ `STEPS=200` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
 - `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
@@ -71,6 +80,7 @@ bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 
 ## 已知限制
 
-- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），GSM8K 短 prompt 下显存 ~12-14GB；DeepScaleR 长题可能 OOM，调小 `BATCH`
-- E5 双教师额外占用 ~3GB 显存
+- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），DeepScaleR 长题可能 OOM，调小 `BATCH`
+- 42 组全参 0.5B 权重约 42GB（`KEEP_MODEL=0` 可在 report 后删除）
+- E5 双教师额外占用 ~1GB 显存
 - 若需 `full-vocabulary OPD` 更省内存版本（top-k KL），可后续优化

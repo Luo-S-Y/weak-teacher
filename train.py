@@ -159,17 +159,14 @@ def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
 # ==================== 训练入口 ====================
 def load_models():
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from peft import LoraConfig, get_peft_model
     dtype = torch.bfloat16
     tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     student = AutoModelForCausalLM.from_pretrained(C.STUDENT_MODEL, torch_dtype=dtype,
-                                                   trust_remote_code=True)
-    lora = LoraConfig(r=C.LORA_R, lora_alpha=C.LORA_ALPHA, bias="none",
-                      target_modules=["q_proj", "k_proj", "v_proj", "o_proj"])
-    student = get_peft_model(student, lora)
-    student.print_trainable_parameters()
+                                                   trust_remote_code=True).to("cuda")
+    trainable = sum(p.numel() for p in student.parameters())
+    log(f"学生 {C.STUDENT_MODEL} 全参训练: {trainable/1e6:.0f}M 参数")
     teacher = AutoModelForCausalLM.from_pretrained(C.TEACHER_MAIN, torch_dtype=dtype,
                                                    trust_remote_code=True).to("cuda").eval()
     for p in teacher.parameters():
@@ -181,11 +178,11 @@ def load_models():
 def train_one(run_name):
     e, w = run_name.split("_")
     ckpt_dir = os.path.join(C.CKPT_DIR, run_name)
-    if os.path.exists(os.path.join(ckpt_dir, "adapter_config.json")):
+    if os.path.exists(os.path.join(ckpt_dir, "config.json")):
         log(f"{run_name} 已存在, 跳过"); return
 
-    pool = json.load(open(POOL_PATH))
-    log(f"训练 {run_name} (E={e}, W={w}), 问题池 {len(pool)} 题")
+    pool = json.load(open(POOL_PATH))[:C.POOL_USE]   # 训练阶段仅用 POOL_USE 条
+    log(f"训练 {run_name} (E={e}, W={w}), 问题池 {len(pool)} 题 (共 {C.POOL_SIZE}, 用 {C.POOL_USE})")
     student, teacher, teacher_extra, tok = load_models()
     if e == "E5":
         from transformers import AutoModelForCausalLM

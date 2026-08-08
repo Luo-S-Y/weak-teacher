@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Step 2: AIME24 评测 (v2: Qwen2.5-1.5B 学生 + LoRA adapter)
-- vLLM 批量评测 (enable_lora), 失败自动回退 transformers + PeftModel
+"""Step 2: AIME24 评测 (v2: Qwen2.5-0.5B 学生全参微调模型)
+- vLLM 批量评测, 失败自动回退 transformers
 用法: python eval.py --all | python eval.py E3_W1
 """
 import os
@@ -40,15 +40,13 @@ def build_prompts(items):
 
 def eval_vllm(run_name, items):
     from vllm import LLM, SamplingParams
-    from vllm.lora.request import LoRARequest
     prompts = build_prompts(items)
-    llm = LLM(model=C.STUDENT_MODEL, dtype="bfloat16", trust_remote_code=True,
+    ckpt = os.path.join(C.CKPT_DIR, run_name)
+    llm = LLM(model=ckpt, dtype="bfloat16", trust_remote_code=True,
               max_model_len=C.MAX_LEN, gpu_memory_utilization=0.85,
-              enable_lora=True, max_lora_rank=C.LORA_R, enforce_eager=True)
+              enforce_eager=True)
     sp = SamplingParams(max_tokens=512, temperature=0.0)
-    lora = LoRARequest(lora_name=run_name, lora_int_id=1,
-                       lora_path=os.path.join(C.CKPT_DIR, run_name))
-    outs = llm.generate(prompts, sp, lora_request=lora, use_tqdm=False)
+    outs = llm.generate(prompts, sp, use_tqdm=False)
     del llm
     return [o.outputs[0].text for o in outs]
 
@@ -56,11 +54,10 @@ def eval_vllm(run_name, items):
 def eval_transformers(run_name, items):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from peft import PeftModel
-    base = AutoModelForCausalLM.from_pretrained(
-        C.STUDENT_MODEL, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
-    model = PeftModel.from_pretrained(base, os.path.join(C.CKPT_DIR, run_name)).to("cuda")
-    tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
+    ckpt = os.path.join(C.CKPT_DIR, run_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        ckpt, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
+    tok = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     prompts = build_prompts(items)
@@ -82,8 +79,8 @@ def eval_one(run_name):
     if os.path.exists(out_path):
         log(f"{run_name} 已评测, 跳过"); return None
     ckpt_dir = os.path.join(C.CKPT_DIR, run_name)
-    if not os.path.isfile(os.path.join(ckpt_dir, "adapter_config.json")):
-        log(f"{run_name} adapter 不存在, 跳过"); return None
+    if not os.path.isfile(os.path.join(ckpt_dir, "config.json")):
+        log(f"{run_name} 模型不存在, 跳过"); return None
     items = load_bench()
     try:
         texts = eval_vllm(run_name, items)

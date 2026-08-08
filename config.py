@@ -23,14 +23,14 @@ for d in (DATA_DIR, RAW_DIR, CKPT_DIR, EVAL_DIR, LOG_DIR):
     os.makedirs(d, exist_ok=True)
 
 # ---------- 模型 ----------
-STUDENT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"      # 学生 (主实验, LoRA r=32 α=64)
-TEACHER_MAIN = "Qwen/Qwen2.5-0.5B-Instruct"       # 主弱教师 (提供逐 token logits)
-TEACHER_EXTRA = "Qwen/Qwen2.5-1.5B-Instruct"      # 辅助教师 (E5 双师一致性, 复用学生底座? 独立加载)
+STUDENT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"      # 学生 (全参微调)
+TEACHER_MAIN = "Qwen/Qwen2.5-1.5B-Instruct"       # 主教师 (提供逐 token logits)
+TEACHER_EXTRA = "Qwen/Qwen2.5-0.5B-Instruct"      # 辅助教师 (E5 双师一致性)
 
 # ---------- 问题池 (rollout 输入) ----------
-POOL = "gsm8k"                                     # 问题池: gsm8k | deepscaler
-GSM8K_POOL_SIZE = 7473                             # GSM8K train 全量
-DEEPSCALER_NUM = 8000                              # DeepScaleR 抽样数 (若用)
+POOL = "deepscaler"                                # 训练问题池: DeepScaleR
+POOL_SIZE = 8000                                   # 下载/抽样题数 (排除 AIME24 重复后)
+POOL_USE = 500                                     # 训练阶段实际使用的题数 (可配置, 默认 500)
 TRAIN_SEED = 42
 MATH500_DATASET = "Hothan/MATH500"                 # 备用评测 (镜像可能无缓存)
 MATH500_SPLIT = "test"
@@ -44,9 +44,7 @@ ROLLOUT_MAX_NEW = 100                              # 学生轨迹长度 N
 ROLLOUT_TEMP = 0.7                                 # 学生采样温度
 TOP_K = 16                                         # E2/E4/E5 分布 top-k
 
-# ---------- LoRA (学生) ----------
-LORA_R = 32
-LORA_ALPHA = 64
+# ---------- 训练 (全参) ----------
 LR = 1e-5
 WARMUP_STEPS = 10
 MAX_GRAD_NORM = 1.0
@@ -58,7 +56,7 @@ W2_TAU = 0.7                                      # W2 硬阈值
 W5_TAU_START = 0.8                                # W5 课程起始阈值 (线性降到 0)
 E6_MIX = {"E2": 0.7, "E1": 0.3}                   # E6 = 归一化组合
 
-# 训练完是否保留 adapter (42 组 LoRA 很小, 默认保留)
+# 训练完是否保留权重 (42 组全参 0.5B 约 42GB, 默认保留; 磁盘不足可 KEEP_MODEL=0)
 KEEP_MODEL = os.environ.get("KEEP_MODEL", "1") == "1"
 
 

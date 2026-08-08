@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Step 0: 数据集准备 (v2)
-- 问题池: 默认 GSM8K train 7473 题 (rollout 输入), 可选 --deepscaler 用 DeepScaleR 8000 题
-- 评测: AIME24 (30 题, 内置兜底), 可选 --math500/--gsm8k_test/--code
+"""Step 0: 数据集准备
+- 训练问题池: DeepScaleR 下载 POOL_SIZE=8000 题 (排除与 AIME24 重复的题, 防验证集穿越)
+- 评测: AIME24 (30 题, 内置兜底)
 输出: data/raw/pool.json + data/raw/aime24.json
 
-用法: python prepare_data.py [--deepscaler] [--math500] [--gsm8k_test] [--code] [--all]
+用法: python prepare_data.py
 """
 import os
 import sys
@@ -30,31 +30,10 @@ def load_raw(name):
     return json.load(open(path)) if os.path.exists(path) else None
 
 
-# ---------- 问题池 ----------
-def prep_pool(deepscaler=False):
-    """rollout 输入问题池 (只提供题目, 无监督标签)"""
+# ---------- 问题池 (DeepScaleR 8000 题, 去 AIME24 防穿越) ----------
+def prep_pool():
     if load_raw("pool.json"):
         log("问题池已存在, 跳过"); return
-    if deepscaler:
-        rows = _pool_deepscaler()
-    else:
-        rows = _pool_gsm8k()
-    if not rows:
-        log("ERROR: 问题池下载失败")
-        raise SystemExit(1)
-    random.seed(C.TRAIN_SEED)
-    random.shuffle(rows)
-    save("pool.json", rows)
-
-
-def _pool_gsm8k():
-    from datasets import load_dataset
-    log("下载 GSM8K train (openai/gsm8k)")
-    ds = load_dataset("openai/gsm8k", "main", split="train", trust_remote_code=True)
-    return [{"problem": r["question"]} for r in ds]
-
-
-def _pool_deepscaler():
     from datasets import load_dataset
     rows = None
     for ds_id in ("pe-nlp/DeepScaleR-40k-Prompt", "lime-nlp/DeepScaleR_Difficulty"):
@@ -68,11 +47,39 @@ def _pool_deepscaler():
             break
         except Exception as e:
             log(f"  {ds_id} 失败: {str(e)[:100]}")
-    if rows:
-        random.seed(C.TRAIN_SEED)
-        random.shuffle(rows)
-        rows = rows[:C.DEEPSCALER_NUM]
-    return rows
+    if not rows:
+        log("ERROR: DeepScaleR 下载失败, 所有候选数据集均不可用")
+        raise SystemExit(1)
+
+    # 防验证集穿越: 排除与 AIME24 评测集重复的题
+    aime_probs = _aime24_problems()
+    if aime_probs:
+        before = len(rows)
+        rows = [r for r in rows if not _is_aime_dup(r["problem"], aime_probs)]
+        log(f"  排除 AIME24 重复题: {before} -> {len(rows)}")
+
+    random.seed(C.TRAIN_SEED)
+    random.shuffle(rows)
+    rows = rows[:C.POOL_SIZE]
+    save("pool.json", rows)
+
+
+def _aime24_problems():
+    """AIME24 评测题问题文本集合 (归一化), 用于训练抽样排除, 防评测泄漏"""
+    paths = [os.path.join(C.RAW_DIR, "aime24.json"), ASSET_AIME]
+    for p in paths:
+        if os.path.exists(p):
+            return {re.sub(r"\s+", " ", r["problem"]).strip() for r in json.load(open(p))}
+    return set()
+
+
+def _is_aime_dup(problem, aime_probs):
+    """problem 与任一 AIME24 题文本相同/互相包含则视为重复"""
+    p = re.sub(r"\s+", " ", problem).strip()
+    for a in aime_probs:
+        if p == a or (len(p) > 50 and (p in a or a in p)):
+            return True
+    return False
 
 
 # ---------- 评测 ----------
@@ -110,23 +117,10 @@ def prep_aime24():
     save("aime24.json", rows)
 
 
-def prep_math500():
-    if load_raw("math500.json"):
-        log("MATH500 已存在, 跳过"); return
-    from datasets import load_dataset
-    log(f"下载 MATH500 ({C.MATH500_DATASET})")
-    ds = load_dataset(C.MATH500_DATASET, split=C.MATH500_SPLIT, trust_remote_code=True)
-    rows = [{"problem": r["problem"], "answer": r["answer"]} for r in ds]
-    save("math500.json", rows)
-
-
 def main():
-    flags = sys.argv[1:]
-    prep_pool(deepscaler=("--deepscaler" in flags or "--all" in flags))
-    prep_aime24()
-    if "--math500" in flags or "--all" in flags:
-        prep_math500()
-    log("数据集准备完成: 问题池 + AIME24 评测")
+    prep_aime24()          # 先就绪 AIME24 (pool 去重需要)
+    prep_pool()
+    log(f"数据集准备完成: 问题池 {C.POOL_SIZE} 题 (训练用 {C.POOL_USE}) + AIME24 评测")
 
 
 if __name__ == "__main__":
