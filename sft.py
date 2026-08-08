@@ -24,7 +24,8 @@ SFT_PATH = os.path.join(C.RAW_DIR, "sft1000.jsonl")
 OUT_DIR = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
 
 LR = 2e-4
-BATCH = 4
+BATCH = 2
+GRAD_ACCUM = 2          # 梯度累积 2 步, 等价 batch 4 的梯度质量
 EPOCHS = 3
 MAX_LEN = 1024
 SEED = 42
@@ -85,7 +86,8 @@ def main():
 
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to("cuda")
-    model.gradient_checkpointing_enable()          # 省激活显存 (batch4+2048 序列下必须)
+    model.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False})   # 省激活显存, 显式 use_reentrant=False
     model.enable_input_require_grads()             # gradient checkpointing + LoRA 冻结权重配套
     lora = LoraConfig(r=LORA_R, lora_alpha=LORA_ALPHA, bias="none",
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
@@ -99,6 +101,7 @@ def main():
     total = len(data)
     n_steps = (total + BATCH - 1) // BATCH
     global_step = 0
+    accum_steps = 0
     t_start = time.time()
     for ep in range(EPOCHS):
         perm = torch.randperm(total, generator=random_state)
@@ -108,7 +111,6 @@ def main():
             batch = [data[j] for j in idx]
             x, y, m = collate_fn(tok, batch)
             x, y, m = x.to("cuda"), y.to("cuda"), m.to("cuda")
-            opt.zero_grad()
             out = model(input_ids=x, attention_mask=m, use_cache=False).logits
             shift_l = out[..., :-1, :].contiguous()
             shift_y = y[..., 1:].contiguous()
@@ -117,8 +119,11 @@ def main():
             losses = losses.view(shift_l.size(0), -1)
             valid = (shift_y != -100)
             loss = losses[valid].mean()
-            loss.backward()
-            opt.step()
+            (loss / GRAD_ACCUM).backward()       # 梯度累积 (BATCH 小但梯度等价 batch*GRAD_ACCUM)
+            accum_steps += 1
+            if accum_steps % GRAD_ACCUM == 0:
+                opt.step()
+                opt.zero_grad()
             global_step += 1
             ep_loss += loss.item()
             ep_tokens += int(valid.sum().item())
@@ -126,6 +131,9 @@ def main():
                 sps = ep_tokens / (time.time() - t_start)
                 log(f"  epoch {ep+1}/{EPOCHS} step {global_step} "
                     f"loss={loss.item():.4f} | {sps:.0f} tok/s")
+        if accum_steps % GRAD_ACCUM != 0:        # epoch 末尾补一次更新
+            opt.step()
+            opt.zero_grad()
         log(f"epoch {ep+1}/{EPOCHS} 完成, mean loss={ep_loss/n_steps:.4f}")
 
     # 合并 LoRA 并保存完整权重, 评测直接加载
