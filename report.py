@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Step 5: 结果汇总报告 (阶段 A 粗筛分析)
-- 对比 42 组 AIME24 准确率, 基线 E0_W0, 相对增益
+"""Step 3: 结果汇总报告 (阶段 A 粗筛分析)
+- 对比 42 组 AIME24 准确率, 基线 E0_W0 (均匀 reverse-KL), 相对增益
 - 每估计器最佳机制 / 每机制最佳估计器
-用法: python report.py [--cleanup]   (--cleanup: 删除 checkpoint 省磁盘, KEEP_MODEL=1 时跳过)
+用法: python report.py [--cleanup]   (--cleanup: 删除 adapter 省磁盘, KEEP_MODEL=1 时跳过)
 """
 import os
 import sys
@@ -17,6 +17,12 @@ SUMMARY_PATH = os.path.join(C.EVAL_DIR, "summary.json")
 REPORT_PATH = os.path.join(C.EVAL_DIR, "report.md")
 
 
+def _steps(run_name):
+    """从训练日志读取完成的步数"""
+    p = os.path.join(C.LOG_DIR, f"{run_name}.jsonl")
+    return sum(1 for _ in open(p)) if os.path.exists(p) else 0
+
+
 def main():
     cleanup = "--cleanup" in sys.argv
     runs = {}
@@ -25,18 +31,16 @@ def main():
         if os.path.exists(p):
             d = json.load(open(p))
             runs[r] = {"accuracy": d["accuracy"], "correct": d["correct"],
-                       "total": d["total"], "backend": d["backend"]}
-    meta = json.load(open(os.path.join(C.WEIGHT_DIR, "runs.json")))
-    for r in runs:
-        runs[r]["n_samples"] = meta[r]["n_samples"]
+                       "total": d["total"], "backend": d["backend"],
+                       "steps": _steps(r)}
 
     base = runs.get("E0_W0", {}).get("accuracy", 0)
     import time
-    lines = ["# 弱教师可信度加权 - 阶段 A 粗筛报告 (AIME24)",
+    lines = ["# 弱教师可信度加权 (v2 纯 logits 蒸馏) - 阶段 A 粗筛报告 (AIME24)",
              f"\n生成时间: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-             f"\n基线 E0_W0 (无加权弱教师蒸馏): {base*100:.1f}%",
-             f"\n| run | 估计器 | 机制 | 样本数 | 准确率 | 相对增益 |",
-             f"|-----|--------|------|--------|--------|----------|"]
+             f"\n基线 E0_W0 (ESR 式均匀 reverse-KL): {base*100:.1f}%",
+             f"\n| run | 估计器 | 机制 | 步数 | 准确率 | 相对增益 |",
+             f"|-----|--------|------|------|--------|----------|"]
     rows = []
     for r in C.all_runs():
         if r not in runs:
@@ -44,7 +48,7 @@ def main():
         d = runs[r]
         gain = (d["accuracy"] - base) / base if base > 0 else 0
         rows.append((d["accuracy"], r, d))
-        lines.append(f"| {r} | {r.split('_')[0]} | {r.split('_')[1]} | {d['n_samples']} | "
+        lines.append(f"| {r} | {r.split('_')[0]} | {r.split('_')[1]} | {d['steps']} | "
                      f"{d['accuracy']*100:.1f}% | {gain*100:+.1f}% |")
     rows.sort(key=lambda x: -x[0])
     lines.append("\n## 排序 Top 10")

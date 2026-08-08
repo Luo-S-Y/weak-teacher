@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Step 4: AIME24 评测 (阶段 A 筛选指标)
-- vLLM 批量评测 (4090 推荐, vllm>=0.8.5), 失败自动回退 transformers generate
-- 学生评测关闭 thinking (enable_thinking=False), 与蒸馏数据分布一致
+"""Step 2: AIME24 评测 (v2: Qwen2.5-1.5B 学生 + LoRA adapter)
+- vLLM 批量评测 (enable_lora), 失败自动回退 transformers + PeftModel
 用法: python eval.py --all | python eval.py E3_W1
 """
 import os
@@ -13,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
 from utils import log, extract_answer, answers_match
 
+SYS = "You are a helpful math assistant. Solve the problem and put the final answer in \\boxed{}."
+
 
 def load_bench():
     """阶段 A 评测集 = AIME24 (data/raw/aime24.json)"""
@@ -22,8 +23,8 @@ def load_bench():
         sys.exit(1)
     items = []
     for row in json.load(open(path)):
-        gold = extract_answer(row["answer"])
-        items.append({"problem": row["problem"], "gold": gold,
+        items.append({"problem": row["problem"],
+                      "gold": extract_answer(row["answer"]),
                       "gold_raw": row["answer"]})
     return items
 
@@ -31,44 +32,46 @@ def load_bench():
 def build_prompts(items):
     prompts = []
     for it in items:
-        prompts.append(f"<|im_start|>system\nYou are a helpful math assistant. "
-                       f"Solve the problem and provide the final answer in \\boxed{{}}.<|im_end|>\n"
+        prompts.append(f"<|im_start|>system\n{SYS}<|im_end|>\n"
                        f"<|im_start|>user\n{it['problem']}<|im_end|>\n"
                        f"<|im_start|>assistant\n")
     return prompts
 
 
-def eval_vllm(ckpt_dir, items):
+def eval_vllm(run_name, items):
     from vllm import LLM, SamplingParams
+    from vllm.lora.request import LoRARequest
     prompts = build_prompts(items)
-    llm = LLM(model=ckpt_dir, dtype="bfloat16", trust_remote_code=True,
+    llm = LLM(model=C.STUDENT_MODEL, dtype="bfloat16", trust_remote_code=True,
               max_model_len=C.MAX_LEN, gpu_memory_utilization=0.85,
-              enforce_eager=True)
-    sp = SamplingParams(max_tokens=1024, temperature=0.0,
-                        chat_template_kwargs={"enable_thinking": False})
-    outs = llm.generate(prompts, sp, use_tqdm=False)
-    texts = [o.outputs[0].text for o in outs]
+              enable_lora=True, max_lora_rank=C.LORA_R, enforce_eager=True)
+    sp = SamplingParams(max_tokens=512, temperature=0.0)
+    lora = LoRARequest(lora_name=run_name, lora_int_id=1,
+                       lora_path=os.path.join(C.CKPT_DIR, run_name))
+    outs = llm.generate(prompts, sp, lora_request=lora, use_tqdm=False)
     del llm
-    return texts
+    return [o.outputs[0].text for o in outs]
 
 
-def eval_transformers(ckpt_dir, items):
+def eval_transformers(run_name, items):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    model = AutoModelForCausalLM.from_pretrained(
-        ckpt_dir, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
-    tok = AutoTokenizer.from_pretrained(ckpt_dir, trust_remote_code=True)
+    from peft import PeftModel
+    base = AutoModelForCausalLM.from_pretrained(
+        C.STUDENT_MODEL, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
+    model = PeftModel.from_pretrained(base, os.path.join(C.CKPT_DIR, run_name)).to("cuda")
+    tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     prompts = build_prompts(items)
-    texts, batch = [], 8
-    for i in range(0, len(prompts), batch):
-        enc = tok(prompts[i:i + batch], return_tensors="pt", padding=True,
+    texts, bs = [], 8
+    for i in range(0, len(prompts), bs):
+        enc = tok(prompts[i:i + bs], return_tensors="pt", padding=True,
                   truncation=True, max_length=C.MAX_PROBLEM_LEN).to("cuda")
         with torch.no_grad():
-            gen = model.generate(**enc, max_new_tokens=1024, do_sample=False,
+            gen = model.generate(**enc, max_new_tokens=512, do_sample=False,
                                  pad_token_id=tok.pad_token_id)
-        for b in range(len(prompts[i:i + batch])):
+        for b in range(len(prompts[i:i + bs])):
             ids = gen[b][enc.input_ids.shape[1]:]
             texts.append(tok.decode(ids, skip_special_tokens=True))
     return texts
@@ -79,26 +82,26 @@ def eval_one(run_name):
     if os.path.exists(out_path):
         log(f"{run_name} 已评测, 跳过"); return None
     ckpt_dir = os.path.join(C.CKPT_DIR, run_name)
-    if not os.path.isfile(os.path.join(ckpt_dir, "config.json")):
-        log(f"{run_name} checkpoint 不存在, 跳过"); return None
+    if not os.path.isfile(os.path.join(ckpt_dir, "adapter_config.json")):
+        log(f"{run_name} adapter 不存在, 跳过"); return None
     items = load_bench()
     try:
-        texts = eval_vllm(ckpt_dir, items)
+        texts = eval_vllm(run_name, items)
         backend = "vllm"
     except Exception as e:
-        log(f"vLLM 失败({e}), 回退 transformers")
-        texts = eval_transformers(ckpt_dir, items)
+        log(f"vLLM 失败({str(e)[:80]}), 回退 transformers")
+        texts = eval_transformers(run_name, items)
         backend = "transformers"
     results = []
     for it, t in zip(items, texts):
         pred = extract_answer(t)
         results.append({"problem": it["problem"], "gold": it["gold"],
-                        "gold_raw": it["gold_raw"], "output": t,
-                        "pred": pred,
+                        "gold_raw": it["gold_raw"], "output": t, "pred": pred,
                         "correct": answers_match(pred, it["gold"])})
     correct = sum(r["correct"] for r in results)
-    summary = {"run": run_name, "backend": backend, "accuracy": correct / len(results),
-               "correct": correct, "total": len(results), "results": results}
+    summary = {"run": run_name, "backend": backend,
+               "accuracy": correct / len(results), "correct": correct,
+               "total": len(results), "results": results}
     json.dump(summary, open(out_path, "w"), ensure_ascii=False, indent=2)
     log(f"{run_name}: {correct}/{len(results)} = {correct/len(results)*100:.1f}% ({backend})")
     return summary

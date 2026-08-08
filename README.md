@@ -1,70 +1,76 @@
-# 弱教师信号的可信度加权蒸馏 — 阶段 A 复现代码
+# 弱教师信号的可信度加权蒸馏 — 阶段 A 复现代码（v2 纯 logits 蒸馏）
 
-> 方案: `weak-teacher-credibility-experiment.md` | 目标环境: **AutoDL 4090 (24GB, CUDA>=12.1)**
-> 与方案的差异（按已确认决策调整）: 学生用 **Qwen3-0.7B-Instruct**（方案写 1.5B）; 弱教师池首期用**小规模教师**（Qwen2.5-0.5B 主 / 1.5B 辅助投票），截断教师后置; 训练数据用 **DeepScaleR**（40.3k 竞赛级数学题, 抽样 8k, 替代方案 GSM8K）; 评测用 **AIME24**（内置 30 题兜底, 免下载）。
+> 方案: `weak-teacher-credibility-experiment_副本2.md` | 目标环境: **AutoDL 4090 (24GB, CUDA>=12.1)**
+> v2 核心: 训练侧**无判题**，学生 **on-policy rollout** 产生轨迹，弱教师对轨迹前缀给**逐 token logits**，按可信度加权做 **reverse-KL** 蒸馏（ESR 同款循环 + 加权层）。
 
-## 实验设计
+## 训练循环（train.py）
 
 ```
-教师池(0.5B/1.5B) ──生成 CoT+logprob──> DeepScaleR 训练集 8000 条(抽样)
-    │                                      │
-    │  E0 恒1.0  E1 自报置信度  E2 自一致性(K=8)     │
-    │  E3 规则验证器  E4 师生一致  E5 双师投票  E6 混合 │
-    ▼                                      ▼
-7 估计器 × 6 机制 = 42 组 (W0 无加权/W1 样本级/W2 阈值τ=0.7/
-                           W3 token级/W4 软标签插值/W5 课程排序)
-    ▼
-TRL SFTTrainer 加权训练 (Qwen3-0.7B 全参, 1 epoch)
-    ▼
-AIME24 评测 → report.md (基线 E0_W0, 相对增益, top 组合)
+① 采样 16 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(0.5B) 对前缀给 q_t
+──> ④ 估计可信度 c (E0-E6, 全基于 logits) ──> ⑤ L = Σ c·KL(πθ‖πT) 更新学生 (LoRA r32 α64)
 ```
 
-## 快速开始 (AutoDL)
+- 每步轨迹来自**当前学生**（on-policy），数据不复用
+- 学生前向算 `p_t`（带梯度），教师前向算 `q_t`（no_grad），二者取生成 token 位置
+- `Loss = Σ c·KL(p_t‖q_t)`：full-vocab reverse-KL，采样轨迹上的 MC 形式
+
+## 42 组合 = 7 估计器 × 6 机制
+
+**估计器 E0-E6**（输出 token 级 c∈[0,1]，全部只依赖 logits，不用判题）：
+
+| 估计器 | 计算方式 | 信息源 |
+|---|---|---|
+| E0 | 恒 1.0（基线，ESR 式均匀 KL） | — |
+| E1 | 教师自报置信度 = 采样 token 概率 exp(log q(t)) | 教师分布 |
+| E2 | 教师 top-k 分布熵（熵越低越可信） | 教师分布 |
+| E3 | 教师尖锐度（top1−top2） | 教师分布 |
+| E4 | 师生 top-k 重叠率（Rethinking OPD 指标） | 师生双方 |
+| E5 | 双教师 top-k 重叠率（需额外加载 1.5B 教师） | 教师池 |
+| E6 | 0.7×E2 + 0.3×E1 组合 | 组合 |
+
+**机制 W0-W5**（作用在 KL 项）：
+
+| 机制 | 行为 |
+|---|---|
+| W0 | 无加权（标准 reverse-KL） |
+| W1 | 样本级重加权：c_s·KL |
+| W2 | 硬阈值过滤：保留 c>0.7 的样本 |
+| W3 | token 级重加权：c_t·KL_t |
+| W4 | 分布插值：目标分布 = c·q + (1−c)·uniform |
+| W5 | 课程加权：阈值从 0.8 线性降到 0 |
+
+## 快速开始（AutoDL）
 
 ```bash
-cd /root/autodl-tmp/opd          # 上传本目录后
-bash setup.sh                    # 权限配置(数据盘软链) + 清华/HF 镜像 + 依赖 + vllm 评测加速 (同环境)
-bash run_all.sh                  # 全流程 (预计 ~10h)
-# 或分步: 见下方"单步执行"
+cd /root/autodl-tmp/opd
+bash setup.sh                    # 环境 + 依赖 (torch 2.6.0 / vllm 0.8.5)
+bash run_all.sh                  # prepare -> train(42组) -> eval -> report
 ```
-
-> 部署脚本自动把 `checkpoints/ results/` 软链到数据盘 `/root/autodl-tmp`（42 组全参 checkpoint 约 120GB，系统盘放不下）；`AUTODL_TMP=0` 可禁用。若 torch 已可用（AutoDL base 自带）不会重装，避免破坏 CUDA 匹配；vllm 直接装同一环境（若与旧 torch 冲突 pip 会自动升级 torch）。
 
 ## 单步执行
 
 | 命令 | 说明 |
 |---|---|
-| `python prepare_data.py` | 下载 DeepScaleR(抽样 8k, `TRAIN_NUM` 可调) + AIME24 → `data/raw/*.json`（幂等）。AIME24 有内置兜底; `--gsm8k`/`--math500`/`--code` 下载备用数据集 |
-| `python generate_data.py` | 教师生成 CoT + 每 token logprob + 自一致性(K=8) + 学生基线 + 辅助教师投票。`SKIP_SC=1` 跳过自一致性省时 |
-| `python estimate.py` | 计算 E0–E6 置信度, 组装 42 组训练权重 |
-| `python train.py --all` | 训练 42 组 (缺什么训什么, 可断点续跑)。单组 `python train.py E3_W1` |
-| `python eval.py --all` | AIME24 评测 (vLLM, 失败自动回退 transformers) |
-| `python report.py` | 汇总报告 → `results/report.md` |
+| `python prepare_data.py` | 问题池 GSM8K train 7473 题（`--deepscaler` 换 DeepScaleR 8000 题）+ AIME24 评测（内置兜底） |
+| `python train.py --all` | 42 组 on-policy 蒸馏，每组 200 步（`STEPS`）。单组 `python train.py E3_W1` |
+| `python eval.py --all` | AIME24 评测（vLLM+LoRA，回退 transformers） |
+| `python report.py` | 报告 → `results/report.md`（基线 E0_W0，相对增益） |
 
-数据流: `prepare_data.py` → `data/raw/*.json` → `generate_data.py` → `data/generated/train.jsonl` → `estimate.py` → `data/tokenized/base.npz` + `data/weights/*.npz` → `train.py` → `checkpoints/` → `eval.py` → `results/`。
+## 配置（config.py）
 
-## 配置 (config.py)
-
-- `TEACHER_MAIN` 主弱教师 (默认 0.5B, 极端弱); 换 1.5B 可做教师强度对照
-- `SELF_CONSISTENCY_K` 自一致性采样数 (默认 8, 赶时间改 4)
-- `W2_TAU` / `W5_TAU` 阈值
-- `KEEP_MODEL=1` 保留 checkpoint (默认跑完删除, 42 组全参约 120GB)
+- `STUDENT_MODEL`（默认 Qwen2.5-1.5B-Instruct + LoRA）/ `TEACHER_MAIN`（0.5B）/ `TEACHER_EXTRA`（1.5B，仅 E5）
+- `BATCH=16`（OOM 调小）/ `STEPS=200` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
+- `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
 ## 关键实现说明
 
-1. **加权 loss**: `train.py` 继承 TRL `SFTTrainer` 覆盖 `compute_loss`。W1/W2/W5 样本级权重, W3 用共享的 token 级权重 (教师 logprob 经字符对齐映射到学生 token, 失败回退样本级), W4 软标签 = `c·CE + (1-c)·logV`。
-2. **TRL 已 tokenize 数据集**: 数据在 `estimate.py` 一次 tokenize 成 `data/tokenized/base.npz`, 训练时传 `dataset_text_field=None` + `remove_unused_columns=False` 让 TRL 不做二次处理, 并保留权重列。**请勿升级 trl** (接口变动会破坏此路径)。
-3. **Qwen3 thinking**: 训练文本与评测 prompt 均手工拼 `enable_thinking=False` 格式, 保证蒸馏目标与评测一致 (不输出 thinking 块)。
-4. **E4 on-policy 近似**: 阶段 A 用学生**基座** (未微调) 生成答案与教师比对; 精测阶段 (B) 需按方案做多轮迭代。
-
-## 结果解读
-
-- 相对增益 = (加权 − E0_W0)/E0_W0, 验证 H1 (加权是否优于不加权)
-- 每估计器最佳机制对比验证 H2 (规则验证器是否最优)
-- 预计 0.5B 教师在 DeepScaleR 竞赛题上正确率很低 (<10%), 大量低置信样本 → 正是加权要检验的场景
+1. **sampled-token reverse-KL**：loss 用学生采样轨迹上的 KL 估计 `L ≈ Σ c·[Σ_v p_t(v)(log p_t(v) − log q_t(v))]`（full-vocab，严格对应方案公式）
+2. **有效 token mask**：rollout 中 eos 之后的 padding 位置不参与 loss
+3. **E4/E5 复用前向**：E4 学生 top-k 来自训练前向，E5 双教师各一次前向
+4. **评测与训练分离**：训练侧零判题，评测侧标准基准报准确率
 
 ## 已知限制
 
-- `eval.py` 每组合独立加载 vLLM 模型 (~30s/次), 42 组评测 overhead ~20min
-- 自一致性 + 辅助教师 + 学生基线生成共 ~3h (0.5B/1.5B/0.7B 各 8K 条); 若 `TRAIN_NUM` 调大按比例增加
-- 若 TRL 0.15.1 处理 tokenize 数据集报错, 反馈后回退方案: 改用 transformers `Trainer` 子类 (loss 逻辑不变)
+- 全 vocab KL 计算量大（每步 16×100×15 万 vocab），GSM8K 短 prompt 下显存 ~12-14GB；DeepScaleR 长题可能 OOM，调小 `BATCH`
+- E5 双教师额外占用 ~3GB 显存
+- 若需 `full-vocabulary OPD` 更省内存版本（top-k KL），可后续优化
