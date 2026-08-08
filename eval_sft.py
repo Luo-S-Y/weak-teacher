@@ -34,6 +34,7 @@ def main():
         enc = tok([p], return_tensors="pt").to("cuda")
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=1024, do_sample=False,
+                                 repetition_penalty=1.1,   # 防 LoRA 微调后复读循环
                                  pad_token_id=tok.pad_token_id)
         txt = tok.decode(out[0][enc.input_ids.shape[1]:], skip_special_tokens=True)
         pred = extract_answer(txt)
