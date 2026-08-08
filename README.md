@@ -73,6 +73,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 - `STUDENT_MODEL`（Qwen2.5-0.5B-Instruct，**全参**）/ `TEACHER_MAIN`（1.5B）/ `TEACHER_EXTRA`（0.5B，仅 E5）
 - `POOL_SIZE=8000`（DeepScaleR 下载量）/ **`POOL_USE=500`（训练实际使用题数）**
 - `BATCH=16`（OOM 调小）/ `STEPS=200` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
+- `MAX_PROBLEM_LEN=512`（训练问题长度上限，改小显著省显存）/ `MAX_LEN=2048`（评测用）
 - `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
 ## 训练日志（排查用）

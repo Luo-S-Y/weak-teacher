@@ -202,6 +202,7 @@ def load_teacher():
     t0 = __import__("time").time()
     teacher = AutoModelForCausalLM.from_pretrained(C.TEACHER_MAIN, torch_dtype=dtype,
                                                    trust_remote_code=True,
+                                                   attn_implementation="sdpa",
                                                    low_cpu_mem_usage=True).to("cuda").eval()
     for p in teacher.parameters():
         p.requires_grad_(False)
@@ -215,6 +216,7 @@ def load_student():
     t0 = __import__("time").time()
     student = AutoModelForCausalLM.from_pretrained(
         C.STUDENT_MODEL, torch_dtype=torch.bfloat16, trust_remote_code=True,
+        attn_implementation="sdpa",
         low_cpu_mem_usage=True).to("cuda")
     trainable = sum(p.numel() for p in student.parameters())
     log(f"学生 {C.STUDENT_MODEL} 加载完成 ({__import__('time').time()-t0:.0f}s), 全参训练 {trainable/1e6:.0f}M")
@@ -227,6 +229,7 @@ def load_teacher_extra():
     t0 = __import__("time").time()
     te = AutoModelForCausalLM.from_pretrained(
         C.TEACHER_EXTRA, torch_dtype=torch.bfloat16, trust_remote_code=True,
+        attn_implementation="sdpa",
         low_cpu_mem_usage=True).to("cuda").eval()
     for p in te.parameters():
         p.requires_grad_(False)

@@ -40,8 +40,8 @@ MATH500_SPLIT = "test"
 # ---------- 在线蒸馏 (on-policy rollout) ----------
 BATCH = 16                                         # 每步采样题数 (OOM 时调小)
 STEPS = 200                                        # 阶段 A: 42 组合 × 200 步
-MAX_LEN = 2048                                     # 序列截断 (问题 + 轨迹)
-MAX_PROBLEM_LEN = 1024                             # 问题最大长度
+MAX_LEN = 2048                                     # 评测序列截断 (eval 用)
+MAX_PROBLEM_LEN = 512                              # 训练问题最大长度 (训练序列 = 问题 + 轨迹, 改小显著省显存)
 ROLLOUT_MAX_NEW = 100                              # 学生轨迹长度 N
 ROLLOUT_TEMP = 0.7                                 # 学生采样温度
 TOP_K = 16                                         # E2/E4/E5 分布 top-k
