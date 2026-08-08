@@ -172,25 +172,49 @@ def train_step(student, teacher, teacher_extra, tok, problems, step, e, w):
 
 
 # ==================== 训练入口 ====================
-def load_models():
+def load_teacher():
+    """教师模型全局只加载一次 (42 组共享, 不随组卸载)"""
     from transformers import AutoModelForCausalLM, AutoTokenizer
     dtype = torch.bfloat16
     tok = AutoTokenizer.from_pretrained(C.STUDENT_MODEL, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    student = AutoModelForCausalLM.from_pretrained(C.STUDENT_MODEL, torch_dtype=dtype,
-                                                   trust_remote_code=True).to("cuda")
-    trainable = sum(p.numel() for p in student.parameters())
-    log(f"学生 {C.STUDENT_MODEL} 全参训练: {trainable/1e6:.0f}M 参数")
+    t0 = __import__("time").time()
     teacher = AutoModelForCausalLM.from_pretrained(C.TEACHER_MAIN, torch_dtype=dtype,
-                                                   trust_remote_code=True).to("cuda").eval()
+                                                   trust_remote_code=True,
+                                                   low_cpu_mem_usage=True).to("cuda").eval()
     for p in teacher.parameters():
         p.requires_grad_(False)
-    teacher_extra = None
-    return student, teacher, teacher_extra, tok
+    log(f"教师 {C.TEACHER_MAIN} 加载完成 ({__import__('time').time()-t0:.0f}s, 全程共享)")
+    return teacher, tok
 
 
-def train_one(run_name):
+def load_student():
+    """学生每组从预训练权重重新加载 (每组独立实验)"""
+    from transformers import AutoModelForCausalLM
+    t0 = __import__("time").time()
+    student = AutoModelForCausalLM.from_pretrained(
+        C.STUDENT_MODEL, torch_dtype=torch.bfloat16, trust_remote_code=True,
+        low_cpu_mem_usage=True).to("cuda")
+    trainable = sum(p.numel() for p in student.parameters())
+    log(f"学生 {C.STUDENT_MODEL} 加载完成 ({__import__('time').time()-t0:.0f}s), 全参训练 {trainable/1e6:.0f}M")
+    return student
+
+
+def load_teacher_extra():
+    """E5 双教师: 辅助教师 (仅 E5 组需要)"""
+    from transformers import AutoModelForCausalLM
+    t0 = __import__("time").time()
+    te = AutoModelForCausalLM.from_pretrained(
+        C.TEACHER_EXTRA, torch_dtype=torch.bfloat16, trust_remote_code=True,
+        low_cpu_mem_usage=True).to("cuda").eval()
+    for p in te.parameters():
+        p.requires_grad_(False)
+    log(f"辅助教师 {C.TEACHER_EXTRA} 加载完成 ({__import__('time').time()-t0:.0f}s)")
+    return te
+
+
+def train_one(run_name, teacher, teacher_extra, tok):
     e, w = run_name.split("_")
     ckpt_dir = os.path.join(C.CKPT_DIR, run_name)
     if os.path.exists(os.path.join(ckpt_dir, "config.json")):
@@ -198,13 +222,9 @@ def train_one(run_name):
 
     pool = json.load(open(POOL_PATH))[:C.POOL_USE]   # 训练阶段仅用 POOL_USE 条
     log(f"训练 {run_name} (E={e}, W={w}), 问题池 {len(pool)} 题 (共 {C.POOL_SIZE}, 用 {C.POOL_USE})")
-    student, teacher, teacher_extra, tok = load_models()
-    if e == "E5":
-        from transformers import AutoModelForCausalLM
-        teacher_extra = AutoModelForCausalLM.from_pretrained(
-            C.TEACHER_EXTRA, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda").eval()
-        for p in teacher_extra.parameters():
-            p.requires_grad_(False)
+    student = load_student()
+    if e == "E5" and teacher_extra is None:
+        teacher_extra = load_teacher_extra()
 
     opt = torch.optim.AdamW([p for p in student.parameters() if p.requires_grad], lr=C.LR)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / C.WARMUP_STEPS))
@@ -264,7 +284,7 @@ def train_one(run_name):
     os.makedirs(ckpt_dir, exist_ok=True)
     student.save_pretrained(ckpt_dir)
     tok.save_pretrained(ckpt_dir)
-    del student, teacher, teacher_extra
+    del student                      # 只释放学生, 教师全程共享不卸载
     torch.cuda.empty_cache()
     log(f"{run_name} 完成 -> {ckpt_dir}")
 
@@ -273,11 +293,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run", nargs="?", default="--all", help="run 名 或 --all")
     args = ap.parse_args()
+    # 教师 + tokenizer 全局只加载一次, 42 组共享 (显著减少模型加载开销)
+    teacher, tok = load_teacher()
+    teacher_extra = None
     if args.run == "--all":
         for run_name in C.all_runs():
-            train_one(run_name)
+            train_one(run_name, teacher, teacher_extra, tok)
     else:
-        train_one(args.run)
+        train_one(args.run, teacher, teacher_extra, tok)
 
 
 if __name__ == "__main__":
