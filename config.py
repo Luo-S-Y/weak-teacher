@@ -38,8 +38,8 @@ MATH500_DATASET = "Hothan/MATH500"                 # 备用评测 (镜像可能�
 MATH500_SPLIT = "test"
 
 # ---------- 在线蒸馏 (on-policy rollout) ----------
-BATCH = 4                                          # 每步采样题数 (OOM 时调小)
-STEPS = 100                                        # 阶段 A: 42 组合 × 100 步
+BATCH = 8                                          # 每步采样题数 (OOM 时调小)
+STEPS = 50                                         # 阶段 A: 42 组合 × 50 步
 MAX_LEN = 2048                                     # 评测序列截断 (eval 用)
 MAX_PROBLEM_LEN = 512                              # 训练问题最大长度 (训练序列 = 问题 + 轨迹, 改小显著省显存)
 ROLLOUT_MAX_NEW = 100                              # 学生轨迹长度 N

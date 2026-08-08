@@ -6,7 +6,7 @@
 ## 训练循环（train.py）
 
 ```
-① 采样 4 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(1.5B) 对前缀给 q_t
+① 采样 8 题 ──> ② 学生 πθ rollout 轨迹 ŷ (temp=0.7, N=100) ──> ③ 教师(1.5B) 对前缀给 q_t
 ──> ④ 估计可信度 c (E0-E6, 全基于 logits) ──> ⑤ L = Σ c·KL(πθ‖πT) 更新学生 (0.5B 全参)
 ```
 
@@ -62,7 +62,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 | 命令 | 说明 |
 |---|---|
 | `python prepare_data.py` | DeepScaleR 8000 题（去 AIME24 重复）+ AIME24 30 题 + **预下载学生/教师模型**（`--no-models` 跳过） |
-| `python train.py --all` | 42 组 on-policy 蒸馏，每组 100 步（断点续跑）。单组 `python train.py E3_W1` |
+| `python train.py --all` | 42 组 on-policy 蒸馏，每组 50 步（断点续跑）。单组 `python train.py E3_W1` |
 | `python eval.py --all` | AIME24 评测（vLLM，回退 transformers） |
 | `python report.py` | 报告 → `results/report.md`（基线 E0_W0，相对增益） |
 
@@ -72,7 +72,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 
 - `STUDENT_MODEL`（Qwen2.5-0.5B-Instruct，**全参**）/ `TEACHER_MAIN`（1.5B）/ `TEACHER_EXTRA`（0.5B，仅 E5）
 - `POOL_SIZE=8000`（DeepScaleR 下载量）/ **`POOL_USE=500`（训练实际使用题数）**
-- `BATCH=4`（OOM 调小）/ `STEPS=100` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
+- `BATCH=8`（OOM 调小）/ `STEPS=50` / `ROLLOUT_MAX_NEW=100` / `ROLLOUT_TEMP=0.7`
 - `MAX_PROBLEM_LEN=512`（训练问题长度上限，改小显著省显存）/ `MAX_LEN=2048`（评测用）
 - `W2_TAU` / `W5_TAU_START` / `E6_MIX`
 
@@ -81,7 +81,7 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 每 10 步打印一行 + rollout 真实输出，写入 `results/logs/{run}.jsonl`：
 
 ```
-[E3_W1] step 50/100 ( 50.0%) | loss=0.8123 | KL=0.4512 | c=0.320(0.05~0.88) | len=78 | 1876 tok/s | 步时=2.3s | 已用=3.2m | 剩余≈3.2m
+[E3_W1] step 25/50 ( 50.0%) | loss=0.8123 | KL=0.4512 | c=0.320(0.05~0.88) | len=78 | 1876 tok/s | 步时=2.3s | 已用=3.2m | 剩余≈3.2m
     └ rollout: 学生真实生成文本 (每 10 步记录到日志, 截断 400 字符)
 ```
 
@@ -95,6 +95,6 @@ bash run_all.sh                  # 全量: train(42组) -> eval -> report
 
 ## 已知限制
 
-- 全 vocab KL 计算量大（每步 4×100×15 万 vocab），DeepScaleR 长题仍可能 OOM，调小 `BATCH` 或 `MAX_PROBLEM_LEN`
+- 全 vocab KL 计算量大（每步 8×100×15 万 vocab），DeepScaleR 长题仍可能 OOM，调小 `BATCH` 或 `MAX_PROBLEM_LEN`
 - 42 组全参 0.5B 权重约 42GB（`KEEP_MODEL=0` 可在 report 后删除）
 - E5 双教师额外占用 ~1GB 显存
