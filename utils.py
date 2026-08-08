@@ -80,7 +80,7 @@ def is_correct_by_rule(teacher_answer, gold_answer):
 
 
 def build_messages(problem, output=None, system="You are a helpful math assistant. Reason step by step and put the final answer in \\boxed{}."):
-    """Qwen chat 消息格式 (Qwen2.5 教师生成 / Qwen3 学生训练通用)。"""
+    """Qwen chat 消息格式 (Qwen2.5 教师生成 / 学生训练通用)。"""
     if output is None:
         return [{"role": "system", "content": system}, {"role": "user", "content": problem}]
     return [{"role": "system", "content": system},
