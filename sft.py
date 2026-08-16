@@ -18,17 +18,18 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
-from utils import log
+from utils import log, extract_answer
 
 MODEL = "Qwen/Qwen3-1.7B-Base"
 SFT_PATH = os.path.join(C.RAW_DIR, "sft1000.jsonl")
 OUT_DIR = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
 
-LR = 1e-5               # 全参 SFT 常用 lr (LoRA 才用 2e-4 级)
+LR = 1e-5               # 全参 SFT lr
 BATCH = 2
 GRAD_ACCUM = 2          # 梯度累积 2 步, 等价 batch 4 的梯度质量
-EPOCHS = 1              # 1 epoch: 数据有噪音, 多轮会过拟合坏样本 (复读/时间戳残渣)
-MAX_STEPS = 250         # micro 步上限 (1 epoch=500 步; 250 步=覆盖 500 条, 0=不限制)
+EPOCHS = 3              # 训 3 轮
+WARMUP_RATIO = 0.05     # cosine + warmup (5% 步数预热)
+MAX_STEPS = 0           # micro 步上限 (0=不限制, 训满 3 epoch; 1 epoch=500 步)
 MAX_LEN = 1024
 SEED = 42
 
@@ -42,20 +43,27 @@ def check_env():
             f"请执行: pip install 'transformers>=4.51'")
 
 
-def make_prompt(problem):
-    return (f"Question: {problem}\n\n"
-            "Please reason step by step, and put your final answer within \\boxed{}.\nAnswer:")
+def build_prompt(tok, problem):
+    """推理用同一 chat template (Qwen3): 生成 prompt = user + assistant 头"""
+    return tok.apply_chat_template([{"role": "user", "content": problem}],
+                                   tokenize=False, add_generation_prompt=True)
 
 
 def build(tok):
+    """数据按 Qwen3 格式组织: assistant = think 段(推理) + answer 段(答案)"""
     rows = [json.loads(l) for l in open(SFT_PATH)]
     data, skipped = [], 0
     for r in rows:
-        p_ids = tok(make_prompt(r["problem"]))["input_ids"]
+        ans = r.get("answer") or extract_answer(r["solution"])
+        msgs = [{"role": "user", "content": r["problem"]},
+                {"role": "assistant", "content":
+                 f"<|im_start|>think\n{r['solution']}\n<|im_end|>\n"
+                 f"<|im_start|>answer\n{ans}\n<|im_end|>"}]
+        p_ids = tok.apply_chat_template(msgs[:-1], tokenize=True, add_generation_prompt=True)
         if len(p_ids) >= MAX_LEN:          # prompt 超长则跳过, 防止截断后 labels 错位
             skipped += 1
             continue
-        full = (p_ids + tok(r["solution"])["input_ids"])[:MAX_LEN]
+        full = tok.apply_chat_template(msgs, tokenize=True)[:MAX_LEN]
         labels = [-100] * len(p_ids) + full[len(p_ids):]
         data.append((full, labels))
     if skipped:
@@ -106,6 +114,13 @@ def main():
 
     total = len(data)
     n_steps = (total + BATCH - 1) // BATCH
+    n_updates = max(1, total * EPOCHS // (BATCH * GRAD_ACCUM))   # 总参数更新次数
+    from transformers import get_cosine_schedule_with_warmup
+    sched = get_cosine_schedule_with_warmup(
+        opt, num_warmup_steps=max(1, int(n_updates * WARMUP_RATIO)),
+        num_training_steps=n_updates)
+    log(f"训练计划: {len(data)} 条 × {EPOCHS} epoch = {n_steps*EPOCHS} micro 步 / "
+        f"{n_updates} 次更新, lr={LR}, cosine+warmup")
     global_step = 0
     accum_steps = 0
     t_start = time.time()
@@ -129,6 +144,7 @@ def main():
             accum_steps += 1
             if accum_steps % GRAD_ACCUM == 0:
                 opt.step()
+                sched.step()                 # cosine + warmup
                 opt.zero_grad()
             global_step += 1
             ep_loss += loss.item()
@@ -141,6 +157,7 @@ def main():
                 break
         if accum_steps % GRAD_ACCUM != 0:        # epoch 末尾补一次更新
             opt.step()
+            sched.step()
             opt.zero_grad()
         log(f"epoch {ep+1}/{EPOCHS} 完成, mean loss={ep_loss/n_steps:.4f}")
         if MAX_STEPS and global_step >= MAX_STEPS:

@@ -10,7 +10,7 @@ import argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
 from utils import log, extract_answer, answers_match
-from sft import make_prompt
+from sft import build_prompt
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
 
     correct = 0
     for it in items:
-        p = make_prompt(it["problem"])
+        p = build_prompt(tok, it["problem"])
         enc = tok([p], return_tensors="pt").to("cuda")
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=1024, do_sample=False,

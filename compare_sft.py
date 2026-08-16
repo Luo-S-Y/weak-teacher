@@ -13,7 +13,7 @@ import argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config as C
 from utils import log, extract_answer, answers_match
-from sft import make_prompt
+from sft import build_prompt
 
 BASE = "Qwen/Qwen3-1.7B-Base"
 SFT = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
@@ -62,7 +62,7 @@ def main():
     ms, ts = load(SFT)
     nb = ns = 0
     for i, r in enumerate(sample):
-        p = make_prompt(r["problem"])
+        p = build_prompt(tb, r["problem"])
         out_b = gen(mb, tb, p, args.max_new)
         out_s = gen(ms, ts, p, args.max_new)
         pred_b, pred_s = extract_answer(out_b), extract_answer(out_s)
