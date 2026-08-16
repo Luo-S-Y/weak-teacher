@@ -15,7 +15,9 @@ from sft import build_prompt
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft"))
+    ap.add_argument("--model", default=os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft-think-e3"))
+    ap.add_argument("--format", choices=["think", "plain"], default="think",
+                    help="与训练数据一致的 prompt 格式")
     args = ap.parse_args()
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -30,7 +32,7 @@ def main():
 
     correct = 0
     for it in items:
-        p = build_prompt(tok, it["problem"])
+        p = build_prompt(tok, it["problem"], fmt=args.format)
         enc = tok([p], return_tensors="pt").to("cuda")
         with torch.no_grad():
             out = model.generate(**enc, max_new_tokens=1024, do_sample=False,

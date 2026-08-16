@@ -13,6 +13,7 @@ import os
 import sys
 import json
 import time
+import argparse
 
 import torch
 
@@ -43,27 +44,43 @@ def check_env():
             f"请执行: pip install 'transformers>=4.51'")
 
 
-def build_prompt(tok, problem):
-    """推理用同一 chat template (Qwen3): 生成 prompt = user + assistant 头"""
+def build_prompt(tok, problem, fmt="think"):
+    """推理 prompt (训练/评测同一格式):
+    - think: Qwen3 chat template (user + assistant 头)
+    - plain: 旧式 Question:...Answer: 续写
+    """
+    if fmt == "plain":
+        return (f"Question: {problem}\n\n"
+                "Please reason step by step, and put your final answer within \\boxed{}.\nAnswer:")
     return tok.apply_chat_template([{"role": "user", "content": problem}],
                                    tokenize=False, add_generation_prompt=True)
 
 
-def build(tok):
-    """数据按 Qwen3 格式组织: assistant = think 段(推理) + answer 段(答案)"""
+def build(tok, fmt="think"):
+    """数据组织:
+    - think: assistant = <|im_start|>think(推理) + <|im_start|>answer(答案) (Qwen3 chat template)
+    - plain: 旧式 Question:...Answer: 续写 (无 think 段)
+    """
     rows = [json.loads(l) for l in open(SFT_PATH)]
     data, skipped = [], 0
     for r in rows:
-        ans = r.get("answer") or extract_answer(r["solution"])
-        msgs = [{"role": "user", "content": r["problem"]},
-                {"role": "assistant", "content":
-                 f"<|im_start|>think\n{r['solution']}\n<|im_end|>\n"
-                 f"<|im_start|>answer\n{ans}\n<|im_end|>"}]
-        p_ids = tok.apply_chat_template(msgs[:-1], tokenize=True, add_generation_prompt=True)
+        if fmt == "plain":
+            p = (f"Question: {r['problem']}\n\n"
+                 "Please reason step by step, and put your final answer within \\boxed{}.\nAnswer:")
+            p_ids = tok(p)["input_ids"]
+        else:
+            ans = r.get("answer") or extract_answer(r["solution"])
+            msgs = [{"role": "user", "content": r["problem"]},
+                    {"role": "assistant", "content":
+                     f"<|im_start|>think\n{r['solution']}\n<|im_end|>\n"
+                     f"<|im_start|>answer\n{ans}\n<|im_end|>"}]
+            p_ids = tok.apply_chat_template(msgs[:-1], tokenize=True, add_generation_prompt=True)
         if len(p_ids) >= MAX_LEN:          # prompt 超长则跳过, 防止截断后 labels 错位
             skipped += 1
             continue
-        full = tok.apply_chat_template(msgs, tokenize=True)[:MAX_LEN]
+        c_ids = (tok(r["solution"])["input_ids"] if fmt == "plain"
+                 else tok.apply_chat_template(msgs, tokenize=True)[len(p_ids):])
+        full = (p_ids + c_ids)[:MAX_LEN]
         labels = [-100] * len(p_ids) + full[len(p_ids):]
         data.append((full, labels))
     if skipped:
@@ -86,13 +103,25 @@ def collate_fn(tok, batch):
 
 def main():
     check_env()
+    global EPOCHS, MAX_STEPS, LR
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--format", choices=["think", "plain"], default="think",
+                    help="think=Qwen3 think/answer 段(chat template); plain=旧式续写")
+    ap.add_argument("--epochs", type=int, default=EPOCHS)
+    ap.add_argument("--max-steps", type=int, default=MAX_STEPS)
+    ap.add_argument("--lr", type=float, default=LR)
+    args = ap.parse_args()
+    fmt, EPOCHS, MAX_STEPS, LR = args.format, args.epochs, args.max_steps, args.lr
+    out_dir = os.path.join(C.CKPT_DIR, f"qwen3-1.7b-sft-{fmt}-e{EPOCHS}")
+    log(f"实验: format={fmt}, epochs={EPOCHS}, max_steps={MAX_STEPS}, lr={LR}")
+
     random_state = torch.Generator().manual_seed(SEED)
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(MODEL)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    data = build(tok)
+    data = build(tok, fmt)
     log(f"SFT 数据: {len(data)} 条, 平均长度 {sum(len(a) for a, _ in data)/len(data):.0f} token")
 
     t0 = time.time()
@@ -165,10 +194,10 @@ def main():
             break
 
     # 全参模型直接保存完整权重, 评测直接加载
-    os.makedirs(OUT_DIR, exist_ok=True)
-    model.save_pretrained(OUT_DIR)
-    tok.save_pretrained(OUT_DIR)
-    log(f"SFT 完成 ({(time.time()-t_start)/60:.1f}m) -> {OUT_DIR}")
+    os.makedirs(out_dir, exist_ok=True)
+    model.save_pretrained(out_dir)
+    tok.save_pretrained(out_dir)
+    log(f"SFT 完成 ({(time.time()-t_start)/60:.1f}m) -> {out_dir}")
 
 
 if __name__ == "__main__":

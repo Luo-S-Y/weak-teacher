@@ -16,7 +16,6 @@ from utils import log, extract_answer, answers_match
 from sft import build_prompt
 
 BASE = "Qwen/Qwen3-1.7B-Base"
-SFT = os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft")
 SFT_PATH = os.path.join(C.RAW_DIR, "sft1000.jsonl")
 
 
@@ -48,7 +47,12 @@ def main():
     ap.add_argument("--max-new", type=int, default=1024)
     ap.add_argument("--max-len", type=int, default=0,
                     help="打印输出截断长度, 0=完整显示")
+    ap.add_argument("--sft", default=os.path.join(C.CKPT_DIR, "qwen3-1.7b-sft-think-e3"),
+                    help="SFT checkpoint 目录")
+    ap.add_argument("--format", choices=["think", "plain"], default="think",
+                    help="与训练数据一致的 prompt 格式")
     args = ap.parse_args()
+    sft_dir = args.sft
 
     def show(txt):
         return txt[:args.max_len] if args.max_len else txt
@@ -56,13 +60,13 @@ def main():
     rows = [json.loads(l) for l in open(SFT_PATH)]
     random.seed(42)
     sample = random.sample(rows, min(args.num, len(rows)))
-    log(f"抽取 {len(sample)} 条 (seed=42): {BASE} vs {SFT}")
+    log(f"抽取 {len(sample)} 条 (seed=42): {BASE} vs {sft_dir}")
 
     mb, tb = load(BASE)
-    ms, ts = load(SFT)
+    ms, ts = load(sft_dir)
     nb = ns = 0
     for i, r in enumerate(sample):
-        p = build_prompt(tb, r["problem"])
+        p = build_prompt(tb, r["problem"], fmt=args.format)
         out_b = gen(mb, tb, p, args.max_new)
         out_s = gen(ms, ts, p, args.max_new)
         pred_b, pred_s = extract_answer(out_b), extract_answer(out_s)
