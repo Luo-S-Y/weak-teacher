@@ -74,12 +74,14 @@ def build(tok, fmt="think"):
                     {"role": "assistant", "content":
                      f"<|im_start|>think\n{r['solution']}\n<|im_end|>\n"
                      f"<|im_start|>answer\n{ans}\n<|im_end|>"}]
-            p_ids = tok.apply_chat_template(msgs[:-1], tokenize=True, add_generation_prompt=True)
+            p_ids = tok.apply_chat_template(msgs[:-1], tokenize=True,
+                                            add_generation_prompt=True, return_dict=False)
         if len(p_ids) >= MAX_LEN:          # prompt 超长则跳过, 防止截断后 labels 错位
             skipped += 1
             continue
         c_ids = (tok(r["solution"])["input_ids"] if fmt == "plain"
-                 else tok.apply_chat_template(msgs, tokenize=True)[len(p_ids):])
+                 else tok.apply_chat_template(msgs, tokenize=True,
+                                              return_dict=False)[len(p_ids):])
         full = (p_ids + c_ids)[:MAX_LEN]
         labels = [-100] * len(p_ids) + full[len(p_ids):]
         data.append((full, labels))
