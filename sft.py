@@ -107,6 +107,7 @@ def main():
     check_env()
     global EPOCHS, MAX_STEPS, LR
     ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default=MODEL, help="SFT 基座模型")
     ap.add_argument("--format", choices=["think", "plain"], default="think",
                     help="think=Qwen3 think/answer 段(chat template); plain=旧式续写")
     ap.add_argument("--epochs", type=int, default=EPOCHS)
@@ -114,20 +115,23 @@ def main():
     ap.add_argument("--lr", type=float, default=LR)
     args = ap.parse_args()
     fmt, EPOCHS, MAX_STEPS, LR = args.format, args.epochs, args.max_steps, args.lr
-    out_dir = os.path.join(C.CKPT_DIR, f"qwen3-1.7b-sft-{fmt}-e{EPOCHS}")
-    log(f"实验: format={fmt}, epochs={EPOCHS}, max_steps={MAX_STEPS}, lr={LR}")
+    model_id = args.model
+    out_dir = os.path.join(C.CKPT_DIR,
+                           f"sft-{fmt}-e{EPOCHS}-{model_id.split('/')[-1]}")
+    log(f"实验: model={model_id}, format={fmt}, epochs={EPOCHS}, max_steps={MAX_STEPS}, lr={LR}")
 
     random_state = torch.Generator().manual_seed(SEED)
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    tok = AutoTokenizer.from_pretrained(MODEL)
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     data = build(tok, fmt)
     log(f"SFT 数据: {len(data)} 条, 平均长度 {sum(len(a) for a, _ in data)/len(data):.0f} token")
 
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to("cuda")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id, torch_dtype=torch.bfloat16, trust_remote_code=True).to("cuda")
     model.gradient_checkpointing_enable(
         gradient_checkpointing_kwargs={"use_reentrant": False})   # 省激活显存, 显式 use_reentrant=False
     model.train()   # 全参: 所有参数参与训练
